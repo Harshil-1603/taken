@@ -84,3 +84,8 @@ always prints its evidence so you can judge for yourself.
     uv run pytest
     uv run ruff check
     uv run ruff format --check
+
+## AI assistance
+
+This project is built with AI assistance, and says so openly. Every
+contribution is reviewed and understood by its author before it lands.

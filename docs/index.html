@@ -50,6 +50,10 @@ and it never writes anything to GitHub.</p>
 cd taken
 uv run taken owner/repo#123</code></pre>
 
+<p>Or install it as a tool and skip the clone:</p>
+<pre><code>uv tool install git+https://github.com/RogueAlg0/taken.git
+taken owner/repo#123</code></pre>
+
 <h2>Usage</h2>
 <pre><code>uv run taken owner/repo#123
 uv run taken https://github.com/owner/repo/issues/123

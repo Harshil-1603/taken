@@ -19,6 +19,16 @@ evidence cited.
 `taken?` only makes read-only API calls through your own `gh` login. It never
 sees or stores tokens, and it never writes anything to GitHub.
 
+## Install as a tool
+
+    uv tool install git+https://github.com/RogueAlg0/taken.git
+    taken owner/repo#123
+
+Or with pipx:
+
+    pipx install git+https://github.com/RogueAlg0/taken.git
+    taken owner/repo#123
+
 ## Usage
 
     uv run taken owner/repo#123

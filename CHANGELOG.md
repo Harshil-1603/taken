@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- README with usage, three real examples, and the verdict rules;
+  CONTRIBUTING guide; pull request template.
 - GitHub Actions CI workflow (`.github/workflows/ci.yml`): runs `ruff check`,
   `ruff format --check`, and `pytest` on push and pull requests.
 - Pytest suite (`tests/`): 31 tests covering the verdict logic (GO, TAKEN,

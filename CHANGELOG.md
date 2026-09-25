@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- GitHub Actions CI workflow (`.github/workflows/ci.yml`): runs `ruff check`,
+  `ruff format --check`, and `pytest` on push and pull requests.
 - Pytest suite (`tests/`): 31 tests covering the verdict logic (GO, TAKEN,
   CAUTION, and precedence) and the claimant-pattern matching.
 - Command-line interface (`taken/cli.py`): `taken owner/repo#123` (full

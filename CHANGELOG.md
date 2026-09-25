@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- Pytest suite (`tests/`): 31 tests covering the verdict logic (GO, TAKEN,
+  CAUTION, and precedence) and the claimant-pattern matching.
 - Command-line interface (`taken/cli.py`): `taken owner/repo#123` (full
   issue URLs also accepted), with `--json`, `--me`, `--version`, and
   `--help`. Exit codes 0 (GO), 1 (TAKEN), 2 (CAUTION), 3 (error).

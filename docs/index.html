@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>taken? : is this GitHub issue taken?</title>
+<meta name="description" content="taken? answers one question before you volunteer for a GitHub issue: is it already taken?">
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; line-height: 1.6;
+         max-width: 42rem; margin: 0 auto; padding: 2rem 1.25rem; }
+  h1 { font-size: 2.2rem; margin-bottom: 0.25rem; }
+  .tagline { font-size: 1.15rem; opacity: 0.85; margin-top: 0; }
+  pre { background: #f4f4f5; dark-mode: ignore; padding: 1rem; border-radius: 0.5rem;
+        overflow-x: auto; }
+  @media (prefers-color-scheme: dark) { pre { background: #1f1f23; } }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .verdict { display: inline-block; padding: 0.15rem 0.6rem; border-radius: 999px;
+             font-weight: 600; font-size: 0.9rem; }
+  .go { background: #dcfce7; color: #166534; }
+  .taken { background: #fee2e2; color: #991b1b; }
+  .caution { background: #fef3c7; color: #92400e; }
+  @media (prefers-color-scheme: dark) {
+    .go { background: #14532d; color: #bbf7d0; }
+    .taken { background: #7f1d1d; color: #fecaca; }
+    .caution { background: #78350f; color: #fde68a; }
+  }
+  footer { margin-top: 3rem; font-size: 0.9rem; opacity: 0.7; }
+</style>
+</head>
+<body>
+
+<h1>taken?</h1>
+<p class="tagline">One question, answered before you volunteer for a GitHub issue:<br>
+<em>is it already taken?</em></p>
+
+<p>GitHub shows "linked a pull request" events in the issue timeline, but never
+in the comments. You can read every comment on an issue and still miss that
+someone already opened a PR for it. <code>taken?</code> checks the timeline,
+scans comments for people claiming the work, looks at assignees, reads
+CONTRIBUTING.md for AI contribution policies, and checks whether the repo is
+still active. Then it gives a verdict, with the evidence cited.</p>
+
+<h2>Install</h2>
+<p>You need Python 3.10+ and the <a href="https://cli.github.com/">GitHub CLI</a>
+(<code>gh</code>), authenticated. <code>taken?</code> only makes read-only API
+calls through your own <code>gh</code> login. It never sees or stores tokens,
+and it never writes anything to GitHub.</p>
+<pre><code>git clone https://github.com/RogueAlg0/taken.git
+cd taken
+uv run taken owner/repo#123</code></pre>
+
+<h2>Usage</h2>
+<pre><code>uv run taken owner/repo#123
+uv run taken https://github.com/owner/repo/issues/123
+
+# flags
+uv run taken owner/repo#123 --json        # full findings as JSON
+uv run taken owner/repo#123 --me mylogin  # ignore your own comments</code></pre>
+<p>Exit codes: 0 means <span class="verdict go">GO</span>, 1 means
+<span class="verdict taken">TAKEN</span>, 2 means
+<span class="verdict caution">CAUTION</span>, 3 means something broke.</p>
+
+<h2>How the verdict works</h2>
+<p><span class="verdict taken">TAKEN</span> wins over
+<span class="verdict caution">CAUTION</span>, which wins over
+<span class="verdict go">GO</span>.</p>
+<ul>
+  <li><strong>TAKEN:</strong> the issue is closed, an open PR links to it, or someone is assigned.</li>
+  <li><strong>CAUTION:</strong> a comment says someone wants it (soft claim, they may have moved on),
+      a linked PR was merged but the issue is still open, the repo has an AI policy to respect,
+      or the repo looks inactive.</li>
+  <li><strong>GO:</strong> none of the above.</li>
+</ul>
+<p>The claimant scan is a heuristic over comment text, not proof. The verdict
+always prints its evidence so you can judge for yourself.</p>
+
+<h2>Example</h2>
+<pre><code>$ uv run taken Exodus-Privacy/exodus#300
+taken? Exodus-Privacy/exodus#300
+verdict: TAKEN
+  ...
+  why:
+    - open PR #700 already covers this:
+      https://github.com/Exodus-Privacy/exodus/pull/700</code></pre>
+
+<footer>
+  <a href="https://github.com/RogueAlg0/taken">Source on GitHub</a> (MIT) ·
+  Built with AI assistance, openly disclosed.
+</footer>
+
+</body>
+</html>

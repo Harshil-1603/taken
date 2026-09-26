@@ -1,6 +1,6 @@
 # taken?
 
-[![PyPI](https://img.shields.io/pypi/v/taken-gh)](https://pypi.org/project/taken-gh/)
+[![PyPI](https://img.shields.io/pypi/v/taken-gh?cacheSeconds=3600)](https://pypi.org/project/taken-gh/)
 [![CI](https://github.com/RogueAlg0/taken/actions/workflows/ci.yml/badge.svg)](https://github.com/RogueAlg0/taken/actions)
 [![License: MIT](https://img.shields.io/github/license/RogueAlg0/taken)](LICENSE)
 <!-- Static python badge: shields' pypi/pyversions reads trove classifiers,

@@ -167,6 +167,3 @@ def test_clear_cache_rejects_unsafe_path(unsafe_path, capsys, monkeypatch):
     monkeypatch.setenv("TAKEN_CACHE_DIR", unsafe_path)
     assert cli.main(["--clear-cache"]) == 1
     assert "not a safe path" in capsys.readouterr().err
-
-
-

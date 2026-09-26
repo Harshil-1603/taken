@@ -273,9 +273,7 @@ def _is_cache_dir_safe(cache_dir):
 
     # Allow the default cache location and any explicitly set absolute path
     # that lives inside it.
-    default_cache = os.path.realpath(
-        os.path.join(os.path.expanduser("~"), ".cache", "taken")
-    )
+    default_cache = os.path.realpath(os.path.join(os.path.expanduser("~"), ".cache", "taken"))
     if resolved == default_cache or resolved.startswith(default_cache + os.path.sep):
         return True
 

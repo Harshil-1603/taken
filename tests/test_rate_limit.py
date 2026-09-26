@@ -24,24 +24,30 @@ def stub_run(monkeypatch, script, calls):
     monkeypatch.setattr(checks.time, "sleep", lambda seconds: None)
 
 
-def test_rate_limit_is_dedicated_error(monkeypatch):
+def test_rate_limit_retried_then_raises(monkeypatch):
     calls = []
     stub_run(
         monkeypatch,
-        [FakeProc(1, "", "gh: API rate limit exceeded for user ID 1. (HTTP 403)")],
+        [FakeProc(1, "", "gh: API rate limit exceeded for user ID 1. (HTTP 403)")] * 10,
         calls,
     )
     with pytest.raises(checks.RateLimitError, match="rate limit exceeded"):
         checks.gh_api("repos/octo/repo")
-    assert len(calls) == 1  # hard stop: never retried
+    assert len(calls) == checks.RETRY_ATTEMPTS  # bounded retries, then give up
 
 
-def test_rate_limit_429_is_dedicated_error(monkeypatch):
+def test_rate_limit_429_retried_then_succeeds(monkeypatch):
     calls = []
-    stub_run(monkeypatch, [FakeProc(1, "", "gh: HTTP 429: too many requests")], calls)
-    with pytest.raises(checks.RateLimitError):
-        checks.gh_api("repos/octo/repo")
-    assert len(calls) == 1
+    stub_run(
+        monkeypatch,
+        [
+            FakeProc(1, "", "gh: HTTP 429: too many requests"),
+            FakeProc(0, '{"ok": true}', ""),
+        ],
+        calls,
+    )
+    assert checks.gh_api("repos/octo/repo") == {"ok": True}
+    assert len(calls) == 2
 
 
 def test_rate_limit_message_includes_reset_time(monkeypatch):
@@ -54,13 +60,60 @@ def test_rate_limit_message_includes_reset_time(monkeypatch):
                 "",
                 "gh: API rate limit exceeded. This will reset at 2026-09-26 04:00:00 UTC.",
             )
-        ],
+        ]
+        * 10,
         calls,
     )
     with pytest.raises(checks.RateLimitError) as exc:
         checks.gh_api("repos/octo/repo")
     assert "2026-09-26 04:00:00" in str(exc.value)
     assert "No verdict was recorded" in str(exc.value)
+    assert len(calls) == checks.RETRY_ATTEMPTS
+
+
+def test_secondary_rate_limit_message_distinguishes(monkeypatch):
+    calls = []
+    stub_run(
+        monkeypatch,
+        [
+            FakeProc(
+                1,
+                "",
+                "gh: You have exceeded a secondary rate limit. "
+                "Please wait a few minutes before you try again. (HTTP 403)",
+            )
+        ]
+        * 10,
+        calls,
+    )
+    with pytest.raises(checks.RateLimitError) as exc:
+        checks.gh_api("repos/octo/repo")
+    message = str(exc.value)
+    assert "secondary rate limit" in message
+    assert "not shown by `gh api rate_limit`" in message
+    assert "Check `gh api rate_limit`" not in message
+    assert len(calls) == checks.RETRY_ATTEMPTS
+
+
+def test_retry_after_directive_is_honored(monkeypatch):
+    calls = []
+    sleeps = []
+    stub_run(
+        monkeypatch,
+        [
+            FakeProc(1, "", "gh: HTTP 429: too many requests. Retry-After: 45"),
+            FakeProc(0, '{"ok": true}', ""),
+        ],
+        calls,
+    )
+    monkeypatch.setattr(checks.time, "sleep", lambda seconds: sleeps.append(seconds))
+    assert checks.gh_api("repos/octo/repo") == {"ok": True}
+    assert sleeps == [45.0]
+
+
+def test_retry_after_directive_is_capped(monkeypatch):
+    assert checks._retry_after_seconds("Retry-After: 3600") == 120.0
+    assert checks._retry_after_seconds("no directive here") is None
 
 
 def test_transient_5xx_retried_then_succeeds(monkeypatch):

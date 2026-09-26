@@ -132,22 +132,40 @@ class NotFoundError(TakenError):
 
 
 class RateLimitError(TakenError):
-    """GitHub API rate limit hit: wait for the reset, never retry into it."""
+    """GitHub API rate limit hit after retries: wait for the reset."""
 
 
-# Retry policy for the `gh` subprocess. Transient 5xx failures get a bounded
-# number of retries with backoff and jitter; the jitter keeps parallel
-# discover workers from retrying in lockstep and multiplying budget burn.
-# Rate-limit failures are never retried (hard stop): retrying into a limit
-# spends budget for nothing, and 8 workers doing it would hit one shared
-# limit 8x over.
+# Retry policy for the `gh` subprocess. Transient 5xx failures and rate-limit
+# responses both get a bounded number of retries with backoff and jitter; the
+# jitter keeps parallel discover workers from retrying in lockstep and
+# multiplying budget burn. Throttles are retried (not a hard stop) because a
+# brief pause rides out GitHub's secondary limits, which are about request
+# velocity rather than spent budget; `Retry-After` is honored when the
+# response carries one.
 RETRY_ATTEMPTS = 3
 RETRY_BASE_DELAY = 1.0
+# Longest we will sleep for a single Retry-After directive: a huge value
+# would hang the CLI, so cap it and let the final error surface instead.
+MAX_RETRY_AFTER_DELAY = 120.0
 
 _TRANSIENT_5XX_RE = re.compile(
     r"\b50[0234]\b|internal server error|bad gateway|service unavailable|gateway timeout",
     re.IGNORECASE,
 )
+_SECONDARY_RATE_LIMIT_RE = re.compile(r"secondary rate limit", re.IGNORECASE)
+_RETRY_AFTER_RE = re.compile(r"retry-?after[:\s]+(\d+)", re.IGNORECASE)
+
+
+def _retry_after_seconds(err):
+    """Parse a Retry-After directive (seconds) from an error message, if any."""
+    match = _RETRY_AFTER_RE.search(err or "")
+    if not match:
+        return None
+    try:
+        seconds = int(match.group(1))
+    except ValueError:
+        return None
+    return max(0.0, min(float(seconds), MAX_RETRY_AFTER_DELAY))
 
 
 def _require_dict(value, endpoint):
@@ -377,7 +395,19 @@ def _is_rate_limited(err):
 
 
 def _rate_limit_message(endpoint, err):
-    """Dedicated rate-limit message, with the reset time when gh reports one."""
+    """Dedicated rate-limit message, with the reset time when gh reports one.
+
+    Secondary-limit throttles get their own wording: GitHub's reset-time
+    advice does not apply to them, and `gh api rate_limit` does not show
+    them, so pointing the user there would be misleading.
+    """
+    if _SECONDARY_RATE_LIMIT_RE.search(err or ""):
+        return (
+            f"GitHub API secondary rate limit hit for `gh api {endpoint}`. "
+            "GitHub asks clients to wait a few minutes before retrying; this "
+            "limit is not shown by `gh api rate_limit`. "
+            "No verdict was recorded."
+        )
     reset = None
     match = re.search(r"reset\D*?(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2})?)", err, re.IGNORECASE)
     if match:
@@ -423,7 +453,18 @@ def gh_api(endpoint, params=None):
         if "404" in err or "Not Found" in err:
             raise NotFoundError(f"not found: {endpoint}")
         if _is_rate_limited(err):
-            raise RateLimitError(_rate_limit_message(endpoint, err))
+            attempt += 1
+            if attempt >= RETRY_ATTEMPTS:
+                raise RateLimitError(_rate_limit_message(endpoint, err))
+            # Throttled: back off with jitter so parallel discover workers
+            # don't retry in lockstep. Honor Retry-After when the response
+            # carries one; a brief pause rides out secondary limits, which
+            # are about request velocity rather than spent budget.
+            delay = _retry_after_seconds(err)
+            if delay is None:
+                delay = RETRY_BASE_DELAY * (2 ** (attempt - 1)) + random.uniform(0, 0.5)
+            time.sleep(delay)
+            continue
         attempt += 1
         if not _TRANSIENT_5XX_RE.search(err) or attempt >= RETRY_ATTEMPTS:
             raise TakenError(f"`gh api {endpoint}` failed: {err[:300]}")

@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+
+### Added
+- Opt-in GraphQL fetch paths for the single-issue pipeline: `--graphql`
+  (`TAKEN_GRAPHQL=1`) runs one GraphQL query per issue via `gh api
+  graphql` instead of ~10 REST calls, and `--persistent-session`
+  (`TAKEN_PERSISTENT_SESSION=1`) runs that query over one persistent
+  HTTPS keep-alive connection (token from `gh auth token`, held in memory
+  only). REST stays the default; both paths produce the same findings
+  shape and verdicts. MCP `check_issue` gains matching `graphql` and
+  `persistent_session` parameters. See GRAPHQL_NOTES.md for measurements
+  and the security tradeoff.
+
 ## [0.7.2] - 2026-09-26
 
 ### Added

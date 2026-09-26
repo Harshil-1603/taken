@@ -5,7 +5,7 @@ import json
 import re
 import sys
 
-from taken import __version__, checks, discover
+from taken import __version__, checks, discover, graphql
 from taken.verdict import CAUTION, GO, TAKEN, decide
 
 EXIT_CODES = {GO: 0, TAKEN: 1, CAUTION: 2}
@@ -111,6 +111,18 @@ def build_parser():
         "--clear-cache",
         action="store_true",
         help="delete the API response cache (~/.cache/taken) and exit",
+    )
+    parser.add_argument(
+        "--graphql",
+        action="store_true",
+        help="fetch issue data via one GraphQL query per issue (gh api graphql) "
+        "instead of REST; opt-in, same verdicts",
+    )
+    parser.add_argument(
+        "--persistent-session",
+        action="store_true",
+        help="GraphQL over one persistent HTTPS connection for the process; "
+        "token from `gh auth token` is held in memory only. Opt-in.",
     )
     parser.add_argument("--version", action="version", version=f"taken {__version__}")
     return parser
@@ -300,9 +312,12 @@ def run_discover(args):
     return 0
 
 
-def check_one(owner, repo, number, me):
+def check_one(owner, repo, number, me, mode="rest"):
     """Run the full check on one issue. Returns (target, verdict, reasons, findings)."""
-    findings = checks.run_checks(owner, repo, number, me=me)
+    if mode in ("graphql", "persistent"):
+        findings = graphql.run_checks_graphql(owner, repo, number, me=me, mode=mode)
+    else:
+        findings = checks.run_checks(owner, repo, number, me=me)
     verdict, reasons = decide(findings)
     return f"{owner}/{repo}#{number}", verdict, reasons, findings
 
@@ -336,7 +351,9 @@ def run_single(text, args):
         return run_batch([text], args)
     _, owner, repo, number = parsed
     try:
-        target, verdict, reasons, findings = check_one(owner, repo, number, args.me)
+        target, verdict, reasons, findings = check_one(
+            owner, repo, number, args.me, mode=graphql.fetch_mode(args)
+        )
     except checks.TakenError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 3
@@ -370,6 +387,7 @@ def run_batch(targets, args):
     results = []
     failed = False
     scanned_repo = False
+    mode = graphql.fetch_mode(args)
     for text in targets:
         parsed = parse_target(text)
         if not parsed:
@@ -393,14 +411,14 @@ def run_batch(targets, args):
                 print(f"note: {text}: no open issues found", file=sys.stderr)
             for issue_owner, issue_repo, number in issues:
                 try:
-                    results.append(check_one(issue_owner, issue_repo, number, args.me))
+                    results.append(check_one(issue_owner, issue_repo, number, args.me, mode=mode))
                 except checks.TakenError as exc:
                     print(f"error: {issue_owner}/{issue_repo}#{number}: {exc}", file=sys.stderr)
                     failed = True
         else:
             _, owner, repo, number = parsed
             try:
-                results.append(check_one(owner, repo, number, args.me))
+                results.append(check_one(owner, repo, number, args.me, mode=mode))
             except checks.TakenError as exc:
                 print(f"error: {text}: {exc}", file=sys.stderr)
                 failed = True

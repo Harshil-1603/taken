@@ -26,13 +26,16 @@ except ImportError:  # pydantic is only present with the optional MCP dependency
         return kwargs
 
 
-from taken import __version__, checks, discover
+from taken import __version__, checks, discover, graphql
 from taken.verdict import decide
 
 
-def _check_one(owner, repo, number, me=None):
+def _check_one(owner, repo, number, me=None, mode="rest"):
     """Run the full check suite on one issue; return the tool payload."""
-    findings = checks.run_checks(owner, repo, number, me=me)
+    if mode in ("graphql", "persistent"):
+        findings = graphql.run_checks_graphql(owner, repo, number, me=me, mode=mode)
+    else:
+        findings = checks.run_checks(owner, repo, number, me=me)
     verdict, reasons = decide(findings)
     return {
         "target": f"{owner}/{repo}#{number}",
@@ -48,7 +51,23 @@ def _check_one(owner, repo, number, me=None):
 _VERDICT_RANK = {"GO": 0, "CAUTION": 1, "TAKEN": 2}
 
 
-def check_issue(owner: str, repo: str, issue_number: int, me: str | None = None) -> dict:
+def check_issue(
+    owner: str,
+    repo: str,
+    issue_number: int,
+    me: str | None = None,
+    graphql: Annotated[
+        bool,
+        Field(description="Fetch via one GraphQL query (gh api graphql) instead of REST. Opt-in."),
+    ] = False,
+    persistent_session: Annotated[
+        bool,
+        Field(
+            description="GraphQL over one persistent HTTPS connection; token from "
+            "`gh auth token` held in memory only. Opt-in."
+        ),
+    ] = False,
+) -> dict:
     """Check whether a GitHub issue is already taken.
 
     Verdicts: GO (free to volunteer), TAKEN (spoken for: closed, open PR,
@@ -64,9 +83,12 @@ def check_issue(owner: str, repo: str, issue_number: int, me: str | None = None)
         repo: repository name
         issue_number: issue number to check
         me: your GitHub login; your own comments are ignored in the claimant scan
+        graphql: use the GraphQL fetch path (subprocess) instead of REST
+        persistent_session: use the persistent-session GraphQL path instead of REST
     """
+    mode = "persistent" if persistent_session else ("graphql" if graphql else "rest")
     try:
-        return _check_one(owner, repo, issue_number, me=me)
+        return _check_one(owner, repo, issue_number, me=me, mode=mode)
     except checks.TakenError as exc:
         return {"target": f"{owner}/{repo}#{issue_number}", "error": str(exc)}
 

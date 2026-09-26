@@ -61,6 +61,12 @@ Useful flags:
 - `--label LABEL`: scan mode only considers open issues carrying this label
 - `--no-cache`: bypass the API response cache
 - `--clear-cache`: delete the API response cache and exit
+- `--graphql`: fetch each issue with one GraphQL query (`gh api graphql`)
+  instead of ~10 REST calls; same verdicts, opt-in (or `TAKEN_GRAPHQL=1`)
+- `--persistent-session`: run the GraphQL query over one persistent HTTPS
+  connection for the whole process; the token comes from `gh auth token`
+  and is held in memory only. Opt-in (or `TAKEN_PERSISTENT_SESSION=1`);
+  see GRAPHQL_NOTES.md for the security tradeoff
 - `--version`, `--help`
 
 Exit codes: 0 means GO, 1 means TAKEN, 2 means CAUTION, 3 means something

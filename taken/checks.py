@@ -60,6 +60,20 @@ class NotFoundError(TakenError):
     """A GitHub resource did not exist (HTTP 404)."""
 
 
+def _require_dict(value, endpoint):
+    """Fail closed: a check that got a non-object response must error, not guess."""
+    if not isinstance(value, dict):
+        raise TakenError(f"`gh api {endpoint}` returned an unexpected response")
+    return value
+
+
+def _require_list(value, endpoint):
+    """Fail closed: a check that got a non-list response must error, not guess."""
+    if not isinstance(value, list):
+        raise TakenError(f"`gh api {endpoint}` returned an unexpected response")
+    return value
+
+
 def gh_api(endpoint, params=None):
     """GET a GitHub API endpoint via `gh api` and return parsed JSON."""
     cmd = ["gh", "api", endpoint.lstrip("/")]
@@ -84,7 +98,8 @@ def gh_api(endpoint, params=None):
 
 def check_issue(owner, repo, number):
     """Fetch the basic facts about an issue."""
-    data = gh_api(f"repos/{owner}/{repo}/issues/{number}")
+    endpoint = f"repos/{owner}/{repo}/issues/{number}"
+    data = _require_dict(gh_api(endpoint), endpoint)
     return {
         "number": number,
         "state": data.get("state"),
@@ -104,10 +119,11 @@ def check_timeline(owner, repo, number):
     These events never appear in the issue comments, which is the main
     reason this tool exists.
     """
-    events = gh_api(f"repos/{owner}/{repo}/issues/{number}/timeline", {"per_page": "100"})
+    endpoint = f"repos/{owner}/{repo}/issues/{number}/timeline"
+    events = _require_list(gh_api(endpoint, {"per_page": "100"}), endpoint)
     linked = []
     seen = set()
-    for event in events or []:
+    for event in events:
         if event.get("event") not in ("cross-referenced", "connected"):
             continue
         src = (event.get("source") or {}).get("issue") or {}
@@ -135,9 +151,11 @@ def check_timeline(owner, repo, number):
 
 def find_claimant_hits(comments, me=None):
     """Scan comment bodies for claimant language, skipping the given login."""
+    if not isinstance(comments, list):
+        raise TakenError("comment scan got an unexpected response")
     hits = []
     me_lower = (me or "").lower()
-    for comment in comments or []:
+    for comment in comments:
         author = (comment.get("user") or {}).get("login", "")
         if me_lower and author.lower() == me_lower:
             continue
@@ -161,7 +179,8 @@ def find_claimant_hits(comments, me=None):
 
 def check_claimants(owner, repo, number, me=None):
     """Fetch issue comments and scan them for claimant language."""
-    comments = gh_api(f"repos/{owner}/{repo}/issues/{number}/comments", {"per_page": "100"})
+    endpoint = f"repos/{owner}/{repo}/issues/{number}/comments"
+    comments = _require_list(gh_api(endpoint, {"per_page": "100"}), endpoint)
     return find_claimant_hits(comments, me=me)
 
 
@@ -188,16 +207,18 @@ def classify_policy(text):
 def check_ai_policy(owner, repo):
     """Look for an AI contribution policy in CONTRIBUTING files."""
     for path in CONTRIBUTING_PATHS:
+        endpoint = f"repos/{owner}/{repo}/contents/{path}"
         try:
-            data = gh_api(f"repos/{owner}/{repo}/contents/{path}")
+            data = gh_api(endpoint)
         except NotFoundError:
             continue
-        if not isinstance(data, dict):
-            continue
+        # A path that exists but is unreadable is a real failure, not "no policy".
+        _require_dict(data, endpoint)
         try:
-            text = base64.b64decode(data.get("content") or "").decode("utf-8", errors="replace")
-        except Exception:
-            continue
+            raw = base64.b64decode(data.get("content") or "")
+        except Exception as exc:
+            raise TakenError(f"could not decode {path}: {exc}")
+        text = raw.decode("utf-8", errors="replace")
         verdict, snippet = classify_policy(text)
         return {"verdict": verdict, "snippet": snippet, "source": path}
     return {"verdict": "none-found", "snippet": "", "source": None}
@@ -205,7 +226,8 @@ def check_ai_policy(owner, repo):
 
 def check_repo_health(owner, repo, window_days=HEALTH_WINDOW_DAYS):
     """Check recent pushes and merged PRs as a rough activity signal."""
-    data = gh_api(f"repos/{owner}/{repo}")
+    endpoint = f"repos/{owner}/{repo}"
+    data = _require_dict(gh_api(endpoint), endpoint)
     pushed_at = data.get("pushed_at") or ""
     pushed_recently = False
     if pushed_at:
@@ -214,15 +236,19 @@ def check_repo_health(owner, repo, window_days=HEALTH_WINDOW_DAYS):
     cutoff = datetime.now(timezone.utc) - timedelta(days=window_days)
     recent_merges = 0
     for page in (1, 2):
-        prs = gh_api(
-            f"repos/{owner}/{repo}/pulls",
-            {
-                "state": "closed",
-                "per_page": "50",
-                "page": str(page),
-                "sort": "updated",
-                "direction": "desc",
-            },
+        pulls_endpoint = f"repos/{owner}/{repo}/pulls"
+        prs = _require_list(
+            gh_api(
+                pulls_endpoint,
+                {
+                    "state": "closed",
+                    "per_page": "50",
+                    "page": str(page),
+                    "sort": "updated",
+                    "direction": "desc",
+                },
+            ),
+            pulls_endpoint,
         )
         if not prs:
             break

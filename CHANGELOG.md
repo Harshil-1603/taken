@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Fail closed: every GitHub API check now validates the shape of the
+  response and raises a hard error (exit code 3) on anything unexpected,
+  including unreadable CONTRIBUTING files. A failed check can no longer
+  degrade quietly into a GO verdict.
+
 ### Added
 - README with usage, three real examples, and the verdict rules;
   CONTRIBUTING guide; pull request template.

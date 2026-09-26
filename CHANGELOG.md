@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.2.0] - 2026-09-26
+
+### Added
+- Batch mode: pass several targets (or `--file`) and get one verdict line
+  per target. Exit code is 0 when every target produced a verdict, 3 when
+  any target failed.
+- Repo scan: a bare `owner/repo` target automatically discovers the repo's
+  open issues (PRs excluded, most recently updated first) and checks each
+  one. `--limit N` caps the scan (default 20); `--label` filters by label.
+- API response cache: successful `gh api` responses are cached for one hour
+  in `~/.cache/taken` (`TAKEN_CACHE_DIR` overrides), so repeated scans stay
+  cheap. `--no-cache` bypasses it. The cache never breaks the tool: any
+  cache error is ignored and the request goes out normally.
+
 ## [0.1.2] - 2026-09-26
 
 ### Fixed

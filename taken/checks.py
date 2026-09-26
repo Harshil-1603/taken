@@ -6,12 +6,18 @@ authentication and never sees, stores, or handles any token.
 
 import base64
 import json
+import os
 import re
 import subprocess
+import time
 from datetime import datetime, timedelta, timezone
 
 API_TIMEOUT = 60
 HEALTH_WINDOW_DAYS = 30
+CACHE_TTL_SECONDS = 3600
+
+# Set to False (via --no-cache) to bypass the response cache.
+_CACHE_ENABLED = True
 
 PR_URL_RE = re.compile(r"^https?://github\.com/([^/]+)/([^/]+)/pull/(\d+)")
 
@@ -74,11 +80,61 @@ def _require_list(value, endpoint):
     return value
 
 
+def _cache_path():
+    """Location of the API response cache. Overridable via TAKEN_CACHE_DIR."""
+    base = os.environ.get("TAKEN_CACHE_DIR") or os.path.join(
+        os.path.expanduser("~"), ".cache", "taken"
+    )
+    return os.path.join(base, "api_cache.json")
+
+
+def _cache_key(endpoint, params):
+    parts = [endpoint.lstrip("/")]
+    for key in sorted(params or {}):
+        parts.append(f"{key}={(params or {})[key]}")
+    return "|".join(parts)
+
+
+def _cache_read(key):
+    try:
+        with open(_cache_path(), encoding="utf-8") as fh:
+            entries = json.load(fh)
+        entry = entries.get(key)
+        if not entry:
+            return None
+        if time.time() - entry["fetched_at"] > CACHE_TTL_SECONDS:
+            return None
+        return entry["data"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _cache_write(key, data):
+    try:
+        path = _cache_path()
+        try:
+            with open(path, encoding="utf-8") as fh:
+                entries = json.load(fh)
+        except (OSError, ValueError):
+            entries = {}
+        entries[key] = {"fetched_at": time.time(), "data": data}
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(entries, fh)
+    except OSError:
+        pass  # the cache must never break the tool
+
+
 def gh_api(endpoint, params=None):
     """GET a GitHub API endpoint via `gh api` and return parsed JSON."""
+    key = _cache_key(endpoint, params)
+    if _CACHE_ENABLED:
+        cached = _cache_read(key)
+        if cached is not None:
+            return cached
     cmd = ["gh", "api", endpoint.lstrip("/")]
-    for key, value in (params or {}).items():
-        cmd.extend(["-f", f"{key}={value}"])
+    for key_param, value in (params or {}).items():
+        cmd.extend(["-f", f"{key_param}={value}"])
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=API_TIMEOUT)
     except FileNotFoundError:
@@ -91,9 +147,12 @@ def gh_api(endpoint, params=None):
             raise NotFoundError(endpoint)
         raise TakenError(f"`gh api {endpoint}` failed: {err[:300]}")
     try:
-        return json.loads(proc.stdout)
+        data = json.loads(proc.stdout)
     except json.JSONDecodeError:
         raise TakenError(f"`gh api {endpoint}` did not return JSON")
+    if _CACHE_ENABLED:
+        _cache_write(key, data)
+    return data
 
 
 def check_issue(owner, repo, number):
@@ -222,6 +281,31 @@ def check_ai_policy(owner, repo):
         verdict, snippet = classify_policy(text)
         return {"verdict": verdict, "snippet": snippet, "source": path}
     return {"verdict": "none-found", "snippet": "", "source": None}
+
+
+def list_open_issues(owner, repo, limit=20, label=None):
+    """List open issues (not PRs) for a repo, most recently updated first."""
+    endpoint = f"repos/{owner}/{repo}/issues"
+    params = {"state": "open", "per_page": "100", "sort": "updated", "direction": "desc"}
+    if label:
+        params["labels"] = label
+    found = []
+    page = 1
+    while len(found) < limit:
+        params["page"] = str(page)
+        items = _require_list(gh_api(endpoint, params), endpoint)
+        if not items:
+            break
+        for item in items:
+            if "pull_request" in item:
+                continue
+            found.append((owner, repo, item["number"]))
+            if len(found) >= limit:
+                break
+        if len(items) < 100:
+            break
+        page += 1
+    return found
 
 
 def check_repo_health(owner, repo, window_days=HEALTH_WINDOW_DAYS):

@@ -13,16 +13,25 @@ EXIT_CODES = {GO: 0, TAKEN: 1, CAUTION: 2}
 URL_RE = re.compile(r"^https?://github\.com/([^/\s]+)/([^/\s]+)/issues/(\d+)/?$")
 SHORT_RE = re.compile(r"^([^/\s#]+)/([^/\s#]+)#(\d+)$")
 PATH_RE = re.compile(r"^([^/\s]+)/([^/\s]+)/issues/(\d+)/?$")
+REPO_RE = re.compile(r"^([^/\s#]+)/([^/\s#]+)$")
 
 
 def parse_target(text):
-    """Parse `owner/repo#123` or a GitHub issue URL into (owner, repo, number)."""
+    """Parse a target into ("issue", owner, repo, number) or ("repo", owner, repo).
+
+    Accepts owner/repo#123, GitHub issue URLs, or a bare owner/repo
+    (scan mode: check the repo's open issues automatically).
+    """
     text = text.strip()
     for pattern in (URL_RE, SHORT_RE, PATH_RE):
         match = pattern.match(text)
         if match:
             owner, repo, number = match.groups()
-            return owner, repo, int(number)
+            return ("issue", owner, repo, int(number))
+    match = REPO_RE.match(text)
+    if match:
+        owner, repo = match.groups()
+        return ("repo", owner, repo)
     return None
 
 
@@ -31,13 +40,41 @@ def build_parser():
         prog="taken",
         description="Check whether a GitHub issue is already taken before you volunteer for it.",
     )
-    parser.add_argument("target", help="owner/repo#123 or a GitHub issue URL")
+    parser.add_argument(
+        "targets",
+        nargs="*",
+        help="owner/repo#123 or GitHub issue URLs (one or more)",
+    )
+    parser.add_argument(
+        "--file",
+        metavar="PATH",
+        default=None,
+        help="read targets from a file, one per line (blank lines and # comments ignored)",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=20,
+        metavar="N",
+        help="max open issues to check per owner/repo scan target (default: 20)",
+    )
+    parser.add_argument(
+        "--label",
+        metavar="LABEL",
+        default=None,
+        help="scan mode: only consider open issues carrying this label",
+    )
     parser.add_argument("--json", action="store_true", help="print the full findings as JSON")
     parser.add_argument(
         "--me",
         metavar="LOGIN",
         default=None,
         help="your GitHub login; your own comments are ignored in the claimant scan",
+    )
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="bypass the API response cache (~/.cache/taken, 1h TTL)",
     )
     parser.add_argument("--version", action="version", version=f"taken {__version__}")
     return parser
@@ -111,25 +148,129 @@ def format_human(findings, verdict, reasons):
 def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
-    parsed = parse_target(args.target)
+    if args.no_cache:
+        checks._CACHE_ENABLED = False
+    targets = list(args.targets)
+    if args.file:
+        try:
+            with open(args.file, encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if line and not line.startswith("#"):
+                        targets.append(line)
+        except OSError as exc:
+            print(f"error: cannot read {args.file}: {exc}", file=sys.stderr)
+            return 3
+    if not targets:
+        parser.error("need at least one target or --file")
+    if len(targets) == 1:
+        return run_single(targets[0], args)
+    return run_batch(targets, args)
+
+
+def check_one(owner, repo, number, me):
+    """Run the full check on one issue. Returns (target, verdict, reasons, findings)."""
+    findings = run_checks(owner, repo, number, me=me)
+    verdict, reasons = decide(findings)
+    return f"{owner}/{repo}#{number}", verdict, reasons, findings
+
+
+def run_single(text, args):
+    parsed = parse_target(text)
     if not parsed:
         print(
-            f"error: could not parse {args.target!r}; use owner/repo#123 or an issue URL",
+            f"error: could not parse {text!r}; "
+            "use owner/repo#123, an issue URL, or owner/repo to scan",
             file=sys.stderr,
         )
         return 3
-    owner, repo, number = parsed
+    if parsed[0] == "repo":
+        return run_batch([text], args)
+    _, owner, repo, number = parsed
     try:
-        findings = run_checks(owner, repo, number, me=args.me)
+        target, verdict, reasons, findings = check_one(owner, repo, number, args.me)
     except checks.TakenError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 3
-    verdict, reasons = decide(findings)
     if args.json:
-        print(json.dumps({"verdict": verdict, "reasons": reasons, "findings": findings}, indent=2))
+        print(
+            json.dumps(
+                {"target": target, "verdict": verdict, "reasons": reasons, "findings": findings},
+                indent=2,
+            )
+        )
     else:
         print(format_human(findings, verdict, reasons))
     return EXIT_CODES[verdict]
+
+
+def format_batch_line(target, verdict, reasons):
+    first = reasons[0] if reasons else ""
+    return f"{verdict:7} {target}  {first}"
+
+
+def run_batch(targets, args):
+    """Check many targets; print one verdict line each.
+
+    A bare owner/repo target is scanned automatically: its open issues
+    (up to --limit, optionally filtered by --label) are each checked.
+    Returns 0 when every target produced a verdict, 3 when any target
+    failed to parse or its checks errored.
+    """
+    results = []
+    failed = False
+    for text in targets:
+        parsed = parse_target(text)
+        if not parsed:
+            print(
+                f"error: could not parse {text!r}; "
+                "use owner/repo#123, an issue URL, or owner/repo to scan",
+                file=sys.stderr,
+            )
+            failed = True
+            continue
+        if parsed[0] == "repo":
+            _, owner, repo = parsed
+            try:
+                issues = checks.list_open_issues(owner, repo, limit=args.limit, label=args.label)
+            except checks.TakenError as exc:
+                print(f"error: {text}: {exc}", file=sys.stderr)
+                failed = True
+                continue
+            if not issues:
+                print(f"note: {text}: no open issues found", file=sys.stderr)
+            for issue_owner, issue_repo, number in issues:
+                try:
+                    results.append(check_one(issue_owner, issue_repo, number, args.me))
+                except checks.TakenError as exc:
+                    print(f"error: {issue_owner}/{issue_repo}#{number}: {exc}", file=sys.stderr)
+                    failed = True
+        else:
+            _, owner, repo, number = parsed
+            try:
+                results.append(check_one(owner, repo, number, args.me))
+            except checks.TakenError as exc:
+                print(f"error: {text}: {exc}", file=sys.stderr)
+                failed = True
+    if args.json:
+        print(
+            json.dumps(
+                [
+                    {
+                        "target": target,
+                        "verdict": verdict,
+                        "reasons": reasons,
+                        "findings": findings,
+                    }
+                    for target, verdict, reasons, findings in results
+                ],
+                indent=2,
+            )
+        )
+    else:
+        for target, verdict, reasons, _findings in results:
+            print(format_batch_line(target, verdict, reasons))
+    return 3 if failed else 0
 
 
 if __name__ == "__main__":

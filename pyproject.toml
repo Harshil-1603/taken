@@ -1,6 +1,6 @@
 [project]
 name = "taken-gh"
-version = "0.1.2"
+version = "0.2.0"
 description = "Check whether a GitHub issue is already taken before you volunteer for it."
 readme = "README.md"
 license = { text = "MIT" }

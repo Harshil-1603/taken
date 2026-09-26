@@ -41,10 +41,32 @@ Useful flags:
 
 - `--json`: print the full findings as JSON instead of the human summary
 - `--me LOGIN`: ignore your own comments when scanning for claimants
+- `--file PATH`: read targets from a file, one per line
+- `--limit N`: scan mode checks at most N open issues per repo (default: 20)
+- `--label LABEL`: scan mode only considers open issues carrying this label
+- `--no-cache`: bypass the API response cache
 - `--version`, `--help`
 
 Exit codes: 0 means GO, 1 means TAKEN, 2 means CAUTION, 3 means something
-broke (bad target, no `gh`, API error).
+broke (bad target, no `gh`, API error). With several targets the exit code
+is 0 when every target produced a verdict and 3 when any target failed.
+
+## Batch mode and repo scans
+
+Give `taken` several targets and it prints one verdict line per target:
+
+    taken owner/repo#123 owner/repo#124 --me mylogin
+    TAKEN   owner/repo#123  assigned to: dk5488
+    GO      owner/repo#124  no linked PRs, no assignees, no claimants, repo is active
+
+A bare `owner/repo` scans the repo automatically: its open issues
+(most recently updated first, PRs excluded) are each checked:
+
+    taken django/django --label "good first issue" --limit 10
+
+API responses are cached for one hour in `~/.cache/taken`
+(override with `TAKEN_CACHE_DIR`), so repeated scans stay cheap.
+`--no-cache` skips the cache.
 
 ## JSON output
 

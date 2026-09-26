@@ -50,11 +50,16 @@ def test_malformed_target_is_exit_3(capsys):
     assert "could not parse" in err
 
 
-def test_target_without_issue_number_is_exit_3(capsys):
-    assert main(["octo/repo"]) == 3
+def test_bare_repo_target_scans_instead_of_refusing(monkeypatch, capsys):
+    """`taken octo/repo` scans the repo's open issues; it is not a parse error."""
+    from taken import checks
+
+    monkeypatch.setattr(checks, "list_open_issues", lambda *a, **k: [])
+    assert main(["octo/repo"]) == 0
     err = capsys.readouterr().err
     assert "Traceback" not in err
-    assert "could not parse" in err
+    assert "no open issues found" in err
+    assert "could not parse" not in err
 
 
 def test_empty_target_is_exit_3():

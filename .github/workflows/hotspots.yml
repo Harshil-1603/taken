@@ -4,6 +4,10 @@ name: Hotspot badge refresh
 # main. The badge is computed from git history, so it is recomputed here on
 # every push to main; when the numbers changed, a refresh PR is opened. The
 # PR goes through the normal required checks like any other change.
+#
+# The auto-merge uses the HOTSPOT_MERGE_PAT secret (a fine-grained PAT), not
+# GITHUB_TOKEN: merges attributed to GITHUB_TOKEN do not trigger new workflow
+# runs, which left main's HEAD with no CI signal (#88).
 
 on:
   push:
@@ -28,6 +32,7 @@ jobs:
       - name: Open refresh PR if the badge changed
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MERGE_TOKEN: ${{ secrets.HOTSPOT_MERGE_PAT }}
         run: |
           if git diff --quiet -- docs/badges/hotspot.json; then
             echo "badge unchanged, nothing to do"
@@ -51,4 +56,13 @@ jobs:
           gh pr create --base main --head "$BRANCH" \
             --title "chore: refresh hotspot badge metrics" \
             --body "Refresh of the README hotspots badge (assessed at ${GITHUB_SHA::7}). Current reading: **${MSG}**. Metric: cyclomatic complexity x commit churn per file; see \`scripts/hotspots.py\`."
-          gh pr merge --auto --squash "$BRANCH"
+          # A merge enabled with GITHUB_TOKEN does not trigger new workflow
+          # runs, leaving main's HEAD with no CI signal (#88). Enabling the
+          # auto-merge with a PAT attributes the merge to a user, so CI and
+          # SonarQube run on the merge commit as usual.
+          if [ -n "$MERGE_TOKEN" ]; then
+            GH_TOKEN="$MERGE_TOKEN" gh pr merge --auto --squash "$BRANCH"
+          else
+            echo "WARNING: HOTSPOT_MERGE_PAT is not set; falling back to GITHUB_TOKEN (post-merge CI will not run, see #88)"
+            gh pr merge --auto --squash "$BRANCH"
+          fi

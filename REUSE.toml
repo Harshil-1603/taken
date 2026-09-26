@@ -1,0 +1,16 @@
+version = 1
+SPDX-PackageName = "taken"
+SPDX-PackageSupplier = "RogueAlg0"
+SPDX-PackageDownloadLocation = "https://github.com/RogueAlg0/taken"
+
+[[annotations]]
+path = "**"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 RogueAlg0"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "LICENSE"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 RogueAlg0"
+SPDX-License-Identifier = "MIT"

@@ -16,6 +16,7 @@ import tempfile
 import threading
 import time
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 API_TIMEOUT = 60
 HEALTH_WINDOW_DAYS = 30
@@ -33,7 +34,7 @@ _CACHE_ENABLED = True
 # In-process cache in front of the file cache: within one run, repeated
 # reads of the same key (e.g. repo health for several issues in one repo)
 # never touch disk at all.
-_MEM_CACHE = {}
+_MEM_CACHE: dict[str, dict[str, Any]] = {}
 _MEM_LOCK = threading.Lock()
 
 PR_URL_RE = re.compile(r"^https?://github\.com/([^/]+)/([^/]+)/pull/(\d+)")

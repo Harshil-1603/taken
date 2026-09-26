@@ -22,7 +22,7 @@ try:
     from pydantic import Field
 except ImportError:  # pydantic is only present with the optional MCP dependency
 
-    def Field(**kwargs):
+    def Field(**kwargs):  # type: ignore[no-redef]
         return kwargs
 
 
@@ -127,7 +127,7 @@ def scan_repo(
             )
         except checks.TakenError as exc:
             results.append({"target": f"{issue_owner}/{issue_repo}#{number}", "error": str(exc)})
-    results.sort(key=lambda r: _VERDICT_RANK.get(r.get("verdict"), 3))
+    results.sort(key=lambda r: _VERDICT_RANK.get(str(r.get("verdict") or ""), 3))
     summary = {"GO": 0, "CAUTION": 0, "TAKEN": 0, "errors": 0}
     for item in results:
         verdict = item.get("verdict")

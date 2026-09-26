@@ -71,3 +71,68 @@ jobs:
         run: /tmp/mcp-publisher login github-oidc
       - name: Publish to MCP Registry
         run: /tmp/mcp-publisher publish
+
+  build-deb:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+      - name: Build wheel and vendor dependency wheels
+        run: |
+          uv build
+          mkdir -p deb-wheels
+          python3 -m pip download --no-deps -d deb-wheels tqdm
+      - name: Assemble the .deb package
+        run: |
+          set -e
+          VER="${GITHUB_REF#refs/tags/v}"
+          PKGDIR="deb-pkg"
+          mkdir -p "$PKGDIR/DEBIAN" "$PKGDIR/usr/share/taken/wheels"
+          cp dist/taken_gh-*-py3-none-any.whl deb-wheels/*.whl "$PKGDIR/usr/share/taken/wheels/"
+          cat > "$PKGDIR/DEBIAN/control" <<EOF
+          Package: taken
+          Version: $VER
+          Section: utils
+          Priority: optional
+          Architecture: all
+          Depends: python3, python3-venv
+          Maintainer: RogueAlg0
+          Description: Answer 'taken?' for any GitHub issue before volunteering
+           A small CLI that checks whether a GitHub issue is already being
+           worked on, with GO/TAKEN/CAUTION verdicts. Also ships taken-mcp,
+           an MCP server exposing the same checks to AI assistants.
+          EOF
+          cat > "$PKGDIR/DEBIAN/postinst" <<'SCRIPT'
+          #!/bin/sh
+          set -e
+          VENV=/usr/lib/taken/venv
+          rm -rf "$VENV"
+          python3 -m venv "$VENV"
+          "$VENV/bin/pip" install --quiet --disable-pip-version-check \
+            --no-index --find-links=/usr/share/taken/wheels taken-gh
+          ln -sf "$VENV/bin/taken" /usr/bin/taken
+          ln -sf "$VENV/bin/taken-mcp" /usr/bin/taken-mcp
+          SCRIPT
+          cat > "$PKGDIR/DEBIAN/prerm" <<'SCRIPT'
+          #!/bin/sh
+          set -e
+          rm -f /usr/bin/taken /usr/bin/taken-mcp
+          rm -rf /usr/lib/taken
+          SCRIPT
+          chmod 0755 "$PKGDIR/DEBIAN/postinst" "$PKGDIR/DEBIAN/prerm"
+          chmod 0755 "$PKGDIR/DEBIAN"
+          dpkg-deb --build "$PKGDIR" "taken_${VER}_all.deb"
+          dpkg-deb --info "taken_${VER}_all.deb"
+      - name: Attach .deb to GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          DEB="taken_${TAG#v}_all.deb"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --title "$TAG" --generate-notes
+          fi
+          gh release upload "$TAG" "$DEB" --clobber

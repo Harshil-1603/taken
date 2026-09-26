@@ -158,6 +158,49 @@ def test_discover_tie_break_prefers_recent(monkeypatch):
     assert results[0]["score"] == results[1]["score"]
 
 
+def test_discover_searches_every_label(monkeypatch, capsys):
+    # The first label alone returns enough items to fill the whole pool;
+    # the second label must still contribute candidates. jobs=1 keeps the
+    # ranking deterministic (parallel completion order is arbitrary).
+    label_one = [search_item(n, 1) for n in range(1, 51)]
+    label_two = [search_item(n, 1) for n in range(101, 106)]
+    for item in label_one + label_two:
+        item["updated_at"] = "2026-09-25T00:00:00Z"  # identical: ties keep pool order
+    base = make_fake([], {}, {})
+
+    def fake(endpoint, params=None):
+        if endpoint == "search/issues":
+            q = (params or {}).get("q", "")
+            if 'label:"good first issue"' in q:
+                items = label_one
+            elif 'label:"good-first-issue"' in q:
+                items = label_two
+            else:
+                items = []
+            return {
+                "total_count": len(items),
+                "incomplete_results": False,
+                "items": items,
+            }
+        return base(endpoint, params)
+
+    monkeypatch.setattr(checks, "gh_api", fake)
+    searched = []
+    results = discover.discover(jobs=1, on_searched=searched.append)
+    targets = [r["target"] for r in results]
+    assert len(targets) <= discover.VERIFY_POOL
+    assert "octo/repo#1" in targets  # first label contributed
+    assert "octo/repo#101" in targets  # second label contributed too
+    assert ("good first issue", 50) in searched[0]
+    assert ("good-first-issue", 5) in searched[0]
+
+    # The CLI reports the searched labels and counts on stderr.
+    assert main(["--discover"]) == 0
+    err = capsys.readouterr().err
+    assert "good first issue (50)" in err
+    assert "good-first-issue (5)" in err
+
+
 def test_discover_with_targets_is_error(capsys):
     with pytest.raises(SystemExit) as exc:
         main(["--discover", "octo/repo#1"])

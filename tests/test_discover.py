@@ -65,6 +65,8 @@ def make_fake(items, states, comments_map, labels_map=None, contributing=False):
             raise checks.NotFoundError(endpoint)
         if endpoint.startswith("repos/octo/repo/pulls"):
             return []
+        if endpoint.startswith("repos/octo/repo/commits"):
+            return []
         if endpoint == "repos/octo/repo":
             now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             return {"pushed_at": now, "stargazers_count": 4}
@@ -97,8 +99,8 @@ def test_discover_searches_all_labels_by_default(faked, capsys):
     assert len(lines) == 2  # deduped across the label searches
 
 
-def test_discover_min_stars_filters_everything(faked, capsys):
-    assert main(["--discover", "--label", "good first issue", "--min-stars", "100"]) == 0
+def test_discover_min_contributors_filters_everything(faked, capsys):
+    assert main(["--discover", "--label", "good first issue", "--min-contributors", "100"]) == 0
     out = capsys.readouterr()
     assert out.out.strip() == ""
     assert "no candidates passed verification" in out.err
@@ -186,7 +188,10 @@ def test_discover_searches_every_label(monkeypatch, capsys):
 
     monkeypatch.setattr(checks, "gh_api", fake)
     searched = []
-    results = discover.discover(jobs=1, on_searched=searched.append)
+    # limit=50 returns the whole verify pool: this test is about which
+    # labels contribute candidates to the pool, not about ranking ties,
+    # so it must not depend on top-N tie-break order.
+    results = discover.discover(jobs=1, limit=50, on_searched=searched.append)
     targets = [r["target"] for r in results]
     assert len(targets) <= discover.VERIFY_POOL
     assert "octo/repo#1" in targets  # first label contributed

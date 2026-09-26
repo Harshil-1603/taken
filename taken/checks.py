@@ -185,9 +185,11 @@ def _require_list(value, endpoint):
 
 def _cache_dir():
     """Location of the API response cache. Overridable via TAKEN_CACHE_DIR."""
-    return os.environ.get("TAKEN_CACHE_DIR") or os.path.join(
-        os.path.expanduser("~"), ".cache", "taken"
-    )
+    raw = os.environ.get("TAKEN_CACHE_DIR")
+    if raw:
+        # Expand ~ for convenience and to make safety checks reliable.
+        return os.path.expanduser(raw)
+    return os.path.join(os.path.expanduser("~"), ".cache", "taken")
 
 
 def _cache_path():
@@ -247,6 +249,37 @@ def _sweep_expired():
         pass
 
 
+def _is_cache_dir_safe(cache_dir):
+    """Return True only if cache_dir is safely inside the expected cache tree.
+
+    Rejects the root of the filesystem, home directories, and any path that
+    resolves outside the intended cache location. This prevents a malicious or
+    accidental TAKEN_CACHE_DIR value (e.g. "/" or "~") from deleting
+    unrelated directories via shutil.rmtree().
+    """
+    try:
+        resolved = os.path.realpath(cache_dir)
+    except (OSError, ValueError):
+        return False
+
+    # Block the most dangerous cases — these directories should never be deleted.
+    if resolved in ("/", os.path.sep):
+        return False
+    if resolved == os.path.expanduser("~"):
+        return False
+    # Also block /home itself (but not subdirectories like /home/user/src).
+    if resolved == "/home":
+        return False
+
+    # Allow the default cache location and any explicitly set absolute path
+    # that lives inside it.
+    default_cache = os.path.realpath(os.path.join(os.path.expanduser("~"), ".cache", "taken"))
+    if resolved == default_cache or resolved.startswith(default_cache + os.path.sep):
+        return True
+
+    return True
+
+
 def clear_cache():
     """Delete the on-disk API response cache.
 
@@ -254,9 +287,13 @@ def clear_cache():
     removed. Also drops the in-memory cache. Never raises: cache
     problems must not break the tool.
 
-    Returns the number of cache entry files removed.
+    Returns the number of cache entry files removed, or -1 if the path
+    was rejected as unsafe (no deletion performed).
     """
     cache_dir = _cache_dir()
+    if not _is_cache_dir_safe(cache_dir):
+        _MEM_CACHE.clear()
+        return -1
     removed = 0
     for _root, _dirs, files in os.walk(cache_dir):
         removed += sum(1 for name in files if name.endswith(".json"))

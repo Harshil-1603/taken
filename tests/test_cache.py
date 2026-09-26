@@ -152,3 +152,18 @@ def test_clear_cache_flag_removes_dir(cache_env, counting_run, tmp_path, capsys)
 def test_clear_cache_flag_empty_cache(cache_env, capsys):
     assert cli.main(["--clear-cache"]) == 0
     assert "cleared 0 cache entries" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "unsafe_path",
+    [
+        "/",
+        "~",
+        "/home",
+    ],
+)
+def test_clear_cache_rejects_unsafe_path(unsafe_path, capsys, monkeypatch):
+    """--clear-cache must refuse to delete system directories."""
+    monkeypatch.setenv("TAKEN_CACHE_DIR", unsafe_path)
+    assert cli.main(["--clear-cache"]) == 1
+    assert "not a safe path" in capsys.readouterr().err

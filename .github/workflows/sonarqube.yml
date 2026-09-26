@@ -11,6 +11,8 @@ jobs:
   scan:
     name: SonarQube Cloud scan
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     # Advisory only: the scan step is skipped until the repo is connected
     # on SonarQube Cloud and the SONAR_TOKEN secret is added (see #78).
     # Note: the secrets context is not allowed in `if:`, so the secret

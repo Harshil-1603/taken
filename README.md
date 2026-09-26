@@ -3,7 +3,10 @@
 [![PyPI](https://img.shields.io/pypi/v/taken-gh)](https://pypi.org/project/taken-gh/)
 [![CI](https://github.com/RogueAlg0/taken/actions/workflows/ci.yml/badge.svg)](https://github.com/RogueAlg0/taken/actions)
 [![License: MIT](https://img.shields.io/github/license/RogueAlg0/taken)](LICENSE)
-[![Python](https://img.shields.io/pypi/pyversions/taken-gh)](https://pypi.org/project/taken-gh/)
+<!-- Static python badge: shields' pypi/pyversions reads trove classifiers,
+     not requires-python, so it renders "missing" until a release ships with
+     the Python classifiers below. -->
+[![Python](https://img.shields.io/badge/python-%3E%3D3.10-blue)](https://pypi.org/project/taken-gh/)
 [![MCP Registry](https://img.shields.io/badge/MCP%20Registry-io.github.RogueAlg0%2Ftaken-blue)](https://registry.modelcontextprotocol.io)
 
 <!-- mcp-name: io.github.RogueAlg0/taken -->

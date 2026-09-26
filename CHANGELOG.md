@@ -13,6 +13,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   degrade quietly into a GO verdict.
 
 ### Added
+- Refusal-path tests: AI-policy ban detection on a sample CONTRIBUTING file,
+  malformed targets (exit code 3 with a clean error, no traceback), and a
+  positive test that the --me filter turns an own-comment-only thread into GO.
 - README with usage, three real examples, and the verdict rules;
   CONTRIBUTING guide; pull request template.
 - GitHub Actions CI workflow (`.github/workflows/ci.yml`): runs `ruff check`,

@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.4.1] - 2026-09-26
+
+### Fixed
+- Discover-mode cache redesigned: one file per cache key plus an in-memory
+  layer instead of a single 28MB JSON file rewritten under a lock. Parallel
+  verification no longer serializes on cache writes; a full 40-candidate run
+  dropped from ~6.5 minutes sequential to about a minute with 8 workers.
+
 ## [0.4.0] - 2026-09-26
 
 ### Added

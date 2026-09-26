@@ -5,7 +5,7 @@ import json
 import re
 import sys
 
-from taken import __version__, checks
+from taken import __version__, checks, discover
 from taken.verdict import CAUTION, GO, TAKEN, decide
 
 EXIT_CODES = {GO: 0, TAKEN: 1, CAUTION: 2}
@@ -64,6 +64,24 @@ def build_parser():
         default=None,
         help="scan mode: only consider open issues carrying this label",
     )
+    parser.add_argument(
+        "--discover",
+        action="store_true",
+        help="discover top candidates via GitHub issue search, verified and ranked",
+    )
+    parser.add_argument(
+        "--language",
+        metavar="LANG",
+        default=None,
+        help="discover: only consider repos in this language",
+    )
+    parser.add_argument(
+        "--min-stars",
+        type=int,
+        default=0,
+        metavar="N",
+        help="discover: only consider repos with at least N stars",
+    )
     parser.add_argument("--json", action="store_true", help="print the full findings as JSON")
     parser.add_argument(
         "--me",
@@ -78,18 +96,6 @@ def build_parser():
     )
     parser.add_argument("--version", action="version", version=f"taken {__version__}")
     return parser
-
-
-def run_checks(owner, repo, number, me):
-    issue = checks.check_issue(owner, repo, number)
-    return {
-        "target": f"{owner}/{repo}#{number}",
-        "issue": issue,
-        "linked_prs": checks.check_timeline(owner, repo, number),
-        "claimants": checks.check_claimants(owner, repo, number, me=me),
-        "ai_policy": checks.check_ai_policy(owner, repo),
-        "repo_health": checks.check_repo_health(owner, repo),
-    }
 
 
 def format_human(findings, verdict, reasons):
@@ -161,16 +167,64 @@ def main(argv=None):
         except OSError as exc:
             print(f"error: cannot read {args.file}: {exc}", file=sys.stderr)
             return 3
+    if args.discover:
+        if args.targets or args.file:
+            parser.error("--discover takes no targets")
+        return run_discover(args)
     if not targets:
-        parser.error("need at least one target or --file")
+        parser.error("need at least one target, --file, or --discover")
     if len(targets) == 1:
         return run_single(targets[0], args)
     return run_batch(targets, args)
 
 
+def format_discover_line(result):
+    why = "; ".join(result["why"])
+    return f"{result['score']:3}  {result['target']}  {why}"
+
+
+def run_discover(args):
+    """Search, verify, and rank the top candidates."""
+    try:
+        results = discover.discover(
+            limit=args.limit,
+            language=args.language,
+            label=args.label,
+            min_stars=args.min_stars,
+            me=args.me,
+        )
+    except checks.TakenError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 3
+    if not results:
+        print("no candidates passed verification", file=sys.stderr)
+        return 0
+    if args.json:
+        print(
+            json.dumps(
+                [
+                    {
+                        "target": r["target"],
+                        "score": r["score"],
+                        "why": r["why"],
+                        "verdict": r["verdict"],
+                        "reasons": r["reasons"],
+                        "findings": r["findings"],
+                    }
+                    for r in results
+                ],
+                indent=2,
+            )
+        )
+    else:
+        for r in results:
+            print(format_discover_line(r))
+    return 0
+
+
 def check_one(owner, repo, number, me):
     """Run the full check on one issue. Returns (target, verdict, reasons, findings)."""
-    findings = run_checks(owner, repo, number, me=me)
+    findings = checks.run_checks(owner, repo, number, me=me)
     verdict, reasons = decide(findings)
     return f"{owner}/{repo}#{number}", verdict, reasons, findings
 

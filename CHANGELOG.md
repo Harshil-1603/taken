@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.3.0] - 2026-09-26
+
+### Added
+- Discover mode: `taken --discover` piggybacks on GitHub's issue search API
+  (the same source the web aggregators use) for raw candidates, then runs
+  taken's full verification on each and ranks the survivors. No aggregator
+  filters on the ranking signal that matters most: maintainer responsiveness.
+  Only GO verdicts are ranked, scored on maintainer replies (+3), recent
+  updates (+2), and repo push activity (+1), with an explainable breakdown
+  per candidate. `--language` and `--min-stars` narrow the search;
+  `--limit` caps the output (default 10); `--label` restricts to one label
+  instead of the default set.
+
 ## [0.2.0] - 2026-09-26
 
 ### Added

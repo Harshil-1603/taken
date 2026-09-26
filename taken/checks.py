@@ -73,6 +73,25 @@ def _require_dict(value, endpoint):
     return value
 
 
+def search_issues(query, per_page=50):
+    """Search issues via the GitHub search API.
+
+    This is the same source the web aggregators use; we piggyback on it for
+    candidates and do our own verification and ranking on top.
+    """
+    data = _require_dict(
+        gh_api(
+            "search/issues",
+            {"q": query, "per_page": str(per_page), "sort": "updated", "order": "desc"},
+        ),
+        "search/issues",
+    )
+    items = data.get("items")
+    if not isinstance(items, list):
+        raise TakenError("search/issues returned an unexpected response")
+    return items
+
+
 def _require_list(value, endpoint):
     """Fail closed: a check that got a non-list response must error, not guess."""
     if not isinstance(value, list):
@@ -236,11 +255,15 @@ def find_claimant_hits(comments, me=None):
     return hits
 
 
+def fetch_comments(owner, repo, number):
+    """Fetch raw issue comments (cached like everything else)."""
+    endpoint = f"repos/{owner}/{repo}/issues/{number}/comments"
+    return _require_list(gh_api(endpoint, {"per_page": "100"}), endpoint)
+
+
 def check_claimants(owner, repo, number, me=None):
     """Fetch issue comments and scan them for claimant language."""
-    endpoint = f"repos/{owner}/{repo}/issues/{number}/comments"
-    comments = _require_list(gh_api(endpoint, {"per_page": "100"}), endpoint)
-    return find_claimant_hits(comments, me=me)
+    return find_claimant_hits(fetch_comments(owner, repo, number), me=me)
 
 
 def _first_line_with(text, phrase):
@@ -350,4 +373,17 @@ def check_repo_health(owner, repo, window_days=HEALTH_WINDOW_DAYS):
         "pushed_recently": pushed_recently,
         "recent_merges": recent_merges,
         "stars": data.get("stargazers_count", 0),
+    }
+
+
+def run_checks(owner, repo, number, me=None):
+    """Run the full read-only check suite on one issue; return findings."""
+    issue = check_issue(owner, repo, number)
+    return {
+        "target": f"{owner}/{repo}#{number}",
+        "issue": issue,
+        "linked_prs": check_timeline(owner, repo, number),
+        "claimants": check_claimants(owner, repo, number, me=me),
+        "ai_policy": check_ai_policy(owner, repo),
+        "repo_health": check_repo_health(owner, repo),
     }

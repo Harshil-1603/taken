@@ -68,6 +68,24 @@ API responses are cached for one hour in `~/.cache/taken`
 (override with `TAKEN_CACHE_DIR`), so repeated scans stay cheap.
 `--no-cache` skips the cache.
 
+## Discover mode
+
+`taken --discover` finds contribution candidates across GitHub. It
+piggybacks on GitHub's issue search API (the same source the web
+aggregators use) for raw candidates, then runs taken's full verification
+on each one and ranks the survivors. Only GO verdicts make the list.
+
+    taken --discover --language python --min-stars 50 --limit 10
+      6  octocat/hello-world#42  maintainer replied; updated 1d ago; repo pushed 0d ago
+      4  octocat/other-repo#7    updated 3d ago; repo pushed 2d ago
+
+Candidates are scored on the signal no aggregator filters on: maintainer
+responsiveness. A non-author, non-bot comment scores +3; an issue updated
+in the last 7 days scores +2; a repo pushed in the last 7 days scores +1.
+Each line explains its own score. `--label` restricts the search to one
+label instead of the default set (`good first issue`, `good-first-issue`,
+`beginner friendly`, `help wanted`).
+
 ## JSON output
 
 `taken --json owner/repo#123` prints an object with three keys:

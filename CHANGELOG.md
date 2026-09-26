@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+
+### Added
+- MCP Registry publishing is automated: `publish.yml` gained a
+  `publish-registry` job that logs in with GitHub OIDC (no stored secrets, no
+  device flow) and publishes `server.json` to the official MCP Registry on
+  every release tag. `workflow_dispatch` backfills older releases.
+- `taken` is now listed in the official MCP Registry as
+  `io.github.RogueAlg0/taken`.
+
 ## [0.5.0] - 2026-09-26
 
 ### Added

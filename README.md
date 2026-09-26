@@ -1,5 +1,11 @@
 # taken?
 
+[![PyPI](https://img.shields.io/pypi/v/taken-gh)](https://pypi.org/project/taken-gh/)
+[![CI](https://github.com/RogueAlg0/taken/actions/workflows/ci.yml/badge.svg)](https://github.com/RogueAlg0/taken/actions)
+[![License: MIT](https://img.shields.io/github/license/RogueAlg0/taken)](LICENSE)
+[![Python](https://img.shields.io/pypi/pyversions/taken-gh)](https://pypi.org/project/taken-gh/)
+[![MCP Registry](https://img.shields.io/badge/MCP%20Registry-io.github.RogueAlg0%2Ftaken-blue)](https://registry.modelcontextprotocol.io)
+
 <!-- mcp-name: io.github.RogueAlg0/taken -->
 
 `taken?` answers one question before you volunteer for a GitHub issue: is it
@@ -139,6 +145,10 @@ Three tools:
   issues, most recently updated first.
 - `discover_candidates(limit?, language?, label?, min_stars?, me?)`:
   good-first-issue style candidates, verified and ranked.
+
+`taken` is published in the official
+[MCP Registry](https://registry.modelcontextprotocol.io) as
+`io.github.RogueAlg0/taken`.
 
 ## Examples
 

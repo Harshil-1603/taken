@@ -11,7 +11,10 @@
          max-width: 42rem; margin: 0 auto; padding: 2rem 1.25rem; }
   h1 { font-size: 2.2rem; margin-bottom: 0.25rem; }
   .tagline { font-size: 1.15rem; opacity: 0.85; margin-top: 0; }
-  pre { background: #f4f4f5; dark-mode: ignore; padding: 1rem; border-radius: 0.5rem;
+  .badges { margin: 0.5rem 0 0; }
+  .badges a { text-decoration: none; margin-right: 0.25rem; }
+  .badges img { vertical-align: middle; }
+  pre { background: #f4f4f5; padding: 1rem; border-radius: 0.5rem;
         overflow-x: auto; }
   @media (prefers-color-scheme: dark) { pre { background: #1f1f23; } }
   code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
@@ -25,12 +28,44 @@
     .taken { background: #7f1d1d; color: #fecaca; }
     .caution { background: #78350f; color: #fde68a; }
   }
+  .terminal { background: #0d1117; border-radius: 0.75rem; overflow: hidden;
+              margin: 1rem 0; box-shadow: 0 8px 30px rgba(0,0,0,0.25); }
+  .term-bar { display: flex; gap: 0.45rem; padding: 0.6rem 0.9rem;
+              background: #161b22; }
+  .term-bar span { width: 0.7rem; height: 0.7rem; border-radius: 50%; }
+  .term-bar span:nth-child(1) { background: #ff5f57; }
+  .term-bar span:nth-child(2) { background: #febc2e; }
+  .term-bar span:nth-child(3) { background: #28c840; }
+  .term-body { padding: 0.9rem 1rem 0.25rem; min-height: 12rem; max-height: 24rem;
+               overflow-y: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+               font-size: 0.85rem; line-height: 1.5; color: #c9d1d9;
+               white-space: pre-wrap; word-break: break-word; }
+  .term-body .cmd { color: #7ee787; }
+  .term-body .dim { color: #8b949e; }
+  .term-body .v-go { color: #7ee787; font-weight: 700; }
+  .term-body .v-taken { color: #ff7b72; font-weight: 700; }
+  .term-body .v-caution { color: #ffa657; font-weight: 700; }
+  .term-input-row { display: flex; align-items: center; gap: 0.5rem;
+                    padding: 0.25rem 1rem 0.9rem;
+                    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                    font-size: 0.85rem; color: #7ee787; }
+  .term-input-row input { flex: 1; background: transparent; border: none; outline: none;
+                          color: #c9d1d9; font: inherit; padding: 0; }
+  .term-hint { font-size: 0.85rem; opacity: 0.75; }
+  .term-hint code { cursor: pointer; }
   footer { margin-top: 3rem; font-size: 0.9rem; opacity: 0.7; }
 </style>
 </head>
 <body>
 
 <h1>taken?</h1>
+<p class="badges">
+  <a href="https://pypi.org/project/taken-gh/"><img src="https://img.shields.io/pypi/v/taken-gh" alt="PyPI version"></a>
+  <a href="https://github.com/RogueAlg0/taken/actions"><img src="https://github.com/RogueAlg0/taken/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+  <a href="https://github.com/RogueAlg0/taken/blob/main/LICENSE"><img src="https://img.shields.io/github/license/RogueAlg0/taken" alt="License: MIT"></a>
+  <a href="https://pypi.org/project/taken-gh/"><img src="https://img.shields.io/pypi/pyversions/taken-gh" alt="Python versions"></a>
+  <a href="https://registry.modelcontextprotocol.io"><img src="https://img.shields.io/badge/MCP%20Registry-io.github.RogueAlg0%2Ftaken-blue" alt="MCP Registry"></a>
+</p>
 <p class="tagline">One question, answered before you volunteer for a GitHub issue:<br>
 <em>is it already taken?</em></p>
 
@@ -41,29 +76,59 @@ scans comments for people claiming the work, looks at assignees, reads
 CONTRIBUTING.md for AI contribution policies, and checks whether the repo is
 still active. Then it gives a verdict, with the evidence cited.</p>
 
+<h2>Try it</h2>
+<p>A little simulation of the real thing, right here in your browser. Type a
+command and hit enter:</p>
+<div class="terminal" id="demo-term">
+  <div class="term-bar"><span></span><span></span><span></span></div>
+  <div class="term-body" id="term-body"></div>
+  <div class="term-input-row"><span>$</span><input id="term-input" type="text"
+    autocomplete="off" autocapitalize="off" spellcheck="false"
+    placeholder="type a command, e.g. taken --help"></div>
+</div>
+<p class="term-hint">Try:
+<code data-cmd="taken Exodus-Privacy/exodus#300">taken Exodus-Privacy/exodus#300</code> ·
+<code data-cmd="taken snowflakedb/snowflake-cli#3145 --me RogueAlg0">taken snowflakedb/snowflake-cli#3145 --me RogueAlg0</code> ·
+<code data-cmd="taken --discover --limit 3">taken --discover --limit 3</code></p>
+
 <h2>Install</h2>
 <p>You need Python 3.10+ and the <a href="https://cli.github.com/">GitHub CLI</a>
 (<code>gh</code>), authenticated. <code>taken?</code> only makes read-only API
 calls through your own <code>gh</code> login. It never sees or stores tokens,
 and it never writes anything to GitHub.</p>
-<pre><code>git clone https://github.com/RogueAlg0/taken.git
-cd taken
-uv run taken owner/repo#123</code></pre>
-
-<p>Or install it as a tool from PyPI and skip the clone:</p>
 <pre><code>uv tool install taken-gh
 taken owner/repo#123</code></pre>
 
+<p>Or run it without installing:</p>
+<pre><code>uvx --from taken-gh taken owner/repo#123</code></pre>
+
 <h2>Usage</h2>
-<pre><code>uv run taken owner/repo#123
-uv run taken https://github.com/owner/repo/issues/123
+<pre><code>taken owner/repo#123
+taken https://github.com/owner/repo/issues/123
 
 # flags
-uv run taken owner/repo#123 --json        # full findings as JSON
-uv run taken owner/repo#123 --me mylogin  # ignore your own comments</code></pre>
+taken owner/repo#123 --json        # full findings as JSON
+taken owner/repo#123 --me mylogin  # ignore your own comments
+taken owner/repo --label "good first issue" --limit 10   # scan a repo
+taken --discover --language python --min-stars 50        # find candidates</code></pre>
 <p>Exit codes: 0 means <span class="verdict go">GO</span>, 1 means
 <span class="verdict taken">TAKEN</span>, 2 means
 <span class="verdict caution">CAUTION</span>, 3 means something broke.</p>
+
+<h2>Discover mode</h2>
+<p><code>taken --discover</code> hunts for contribution candidates across
+GitHub: raw candidates come from GitHub's issue search, then each one gets
+taken's full verification and only GO verdicts are ranked. Candidates are
+scored on the signal no aggregator filters on, maintainer responsiveness.</p>
+
+<h2>MCP server</h2>
+<p><code>taken</code> also ships as an MCP server, so coding agents can check
+issues with a tool call instead of shelling out to the CLI
+(<code>check_issue</code>, <code>scan_repo</code>,
+<code>discover_candidates</code>). It is listed in the official
+<a href="https://registry.modelcontextprotocol.io">MCP Registry</a> as
+<code>io.github.RogueAlg0/taken</code>.</p>
+<pre><code>uvx --from taken-gh taken-mcp</code></pre>
 
 <h2>How the verdict works</h2>
 <p><span class="verdict taken">TAKEN</span> wins over
@@ -79,19 +144,124 @@ uv run taken owner/repo#123 --me mylogin  # ignore your own comments</code></pre
 <p>The claimant scan is a heuristic over comment text, not proof. The verdict
 always prints its evidence so you can judge for yourself.</p>
 
-<h2>Example</h2>
-<pre><code>$ uv run taken Exodus-Privacy/exodus#300
-taken? Exodus-Privacy/exodus#300
-verdict: TAKEN
-  ...
-  why:
-    - open PR #700 already covers this:
-      https://github.com/Exodus-Privacy/exodus/pull/700</code></pre>
-
 <footer>
   <a href="https://github.com/RogueAlg0/taken">Source on GitHub</a> (MIT) ·
   Built with AI assistance, openly disclosed.
 </footer>
+
+<script>
+(function () {
+  var body = document.getElementById('term-body');
+  var input = document.getElementById('term-input');
+  var term = document.getElementById('demo-term');
+  var history = [], hIndex = -1;
+
+  function esc(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function print(html) {
+    var div = document.createElement('div');
+    div.innerHTML = html;
+    body.appendChild(div);
+    body.scrollTop = body.scrollHeight;
+  }
+  var HELP = '<span class="dim">usage: taken [owner/repo#123 | owner/repo | --discover] [flags]\n\n' +
+    'demo commands:\n' +
+    '  taken Exodus-Privacy/exodus#300\n' +
+    '  taken chahe-dridi/vscode-agent-bell#200\n' +
+    '  taken snowflakedb/snowflake-cli#3145 --me RogueAlg0\n' +
+    '  taken --discover --limit 3\n' +
+    '  taken --version\n' +
+    '  clear</span>';
+
+  var COMMANDS = {
+    'taken --help': HELP,
+    'help': HELP,
+    'taken --version': 'taken 0.5.0',
+    'taken exodus-privacy/exodus#300':
+      'taken? Exodus-Privacy/exodus#300\n' +
+      'verdict: <span class="v-taken">TAKEN</span>\n\n' +
+      '  issue: open, "Bump max_length for app version strings"\n' +
+      '  linked PRs: #700 (open) by Manny7717\n' +
+      '  assignees: none   claimants: none\n' +
+      '  AI policy: none-found   repo: active\n\n' +
+      '  why:\n' +
+      '    - open PR #700 already covers this:\n' +
+      '      https://github.com/Exodus-Privacy/exodus/pull/700',
+    'taken chahe-dridi/vscode-agent-bell#200':
+      'taken? chahe-dridi/vscode-agent-bell#200\n' +
+      'verdict: <span class="v-taken">TAKEN</span>\n\n' +
+      '  issue: open, "Add a bell sound when the agent finishes"\n' +
+      '  linked PRs: none   claimants: none\n' +
+      '  assignees: dk5488\n' +
+      '  AI policy: none-found   repo: active\n\n' +
+      '  why:\n' +
+      '    - assigned to: dk5488',
+    'taken snowflakedb/snowflake-cli#3145 --me roguealg0':
+      'taken? snowflakedb/snowflake-cli#3145\n' +
+      'verdict: <span class="v-go">GO</span>\n\n' +
+      '  issue: open, "Relax pydantic pin for 2.13 compat"\n' +
+      '  linked PRs: none   assignees: none\n' +
+      '  claimants: none (your own comment ignored via --me)\n' +
+      '  AI policy: none-found   repo: active\n\n' +
+      '  why:\n' +
+      '    - no linked PRs, no assignees, no claimants, repo is active',
+    'taken --discover --limit 3':
+      'taken? --discover\n' +
+      '<span class="dim">verifying 40 candidates...</span>\n\n' +
+      '  score  issue                       why\n' +
+      '  -----  --------------------------  ------------------------------\n' +
+      '      6  octocat/hello-world#42      maintainer replied; updated 1d ago\n' +
+      '      4  octocat/other-repo#7        updated 3d ago; repo pushed 2d ago\n' +
+      '      3  octocat/sample-lib#19       maintainer replied; updated 12d ago\n\n' +
+      '  3 <span class="v-go">GO</span> candidates. Only GO verdicts are ranked.'
+  };
+
+  function run(raw) {
+    var cmd = raw.trim();
+    print('<span class="cmd">$ ' + esc(raw) + '</span>');
+    if (!cmd) return;
+    history.push(raw); hIndex = history.length;
+    var key = cmd.toLowerCase();
+    if (key === 'clear') { body.innerHTML = ''; return; }
+    var out = COMMANDS[key];
+    if (out === undefined) {
+      print('<span class="dim">unknown command in this demo. Try: taken --help</span>');
+      return;
+    }
+    print('<span class="dim">checking...</span>');
+    var spinner = body.lastChild;
+    setTimeout(function () {
+      if (spinner.parentNode === body) body.removeChild(spinner);
+      print(out);
+    }, 450);
+  }
+
+  print('<span class="dim">taken? demo terminal. Type a command below, e.g.</span>');
+  print('<span class="cmd">$ taken --help</span>');
+  print(HELP);
+
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { run(input.value); input.value = ''; }
+    else if (e.key === 'ArrowUp') {
+      if (hIndex > 0) { hIndex--; input.value = history[hIndex] || ''; }
+      e.preventDefault();
+    } else if (e.key === 'ArrowDown') {
+      if (hIndex < history.length - 1) { hIndex++; input.value = history[hIndex]; }
+      else { hIndex = history.length; input.value = ''; }
+      e.preventDefault();
+    }
+  });
+  term.addEventListener('click', function () { input.focus(); });
+  document.querySelectorAll('.term-hint code').forEach(function (el) {
+    el.addEventListener('click', function () {
+      input.value = el.getAttribute('data-cmd');
+      run(input.value); input.value = '';
+      input.focus();
+    });
+  });
+})();
+</script>
 
 </body>
 </html>

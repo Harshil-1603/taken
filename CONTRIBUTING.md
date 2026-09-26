@@ -2,8 +2,9 @@
 
 Thanks for stopping by. A few notes before you open a PR.
 
-- Keep the runtime stdlib-only. Dev tools (ruff, pytest) live in the uv dev
-  group; add new ones there, never as runtime dependencies.
+- Keep runtime dependencies minimal. `tqdm` (progress bar) and `mcp` (the
+  MCP server SDK) are the only two; anything new must justify its weight.
+  Dev tools (ruff, pytest) live in the uv dev group.
 - Run `uv run ruff check`, `uv run ruff format --check`, and `uv run pytest`
   before pushing. CI runs the same three commands.
 - The tool is read-only by design. It must never write anything to the GitHub

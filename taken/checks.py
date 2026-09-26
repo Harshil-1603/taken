@@ -249,13 +249,31 @@ def _sweep_expired():
         pass
 
 
-def _is_cache_dir_safe(cache_dir):
-    """Return True only if cache_dir is safely inside the expected cache tree.
+def _looks_like_taken_cache(cache_dir):
+    """Return True if every file under cache_dir looks like a taken cache file.
 
-    Rejects the root of the filesystem, home directories, and any path that
-    resolves outside the intended cache location. This prevents a malicious or
-    accidental TAKEN_CACHE_DIR value (e.g. "/" or "~") from deleting
-    unrelated directories via shutil.rmtree().
+    taken's on-disk cache contains only api_cache.json at the top level and
+    v2/<digest>.json entry files. If anything else is present, the directory
+    is not (only) a taken cache and must not be deleted wholesale.
+    """
+    for root, _dirs, files in os.walk(cache_dir):
+        for name in files:
+            if name == "api_cache.json":
+                continue
+            if name.endswith(".json") and os.path.basename(root) == "v2":
+                continue
+            return False
+    return True
+
+
+def _is_cache_dir_safe(cache_dir):
+    """Return True only if cache_dir is safe to delete wholesale.
+
+    Accepts the default cache location (and paths inside it) outright. Any
+    other path is accepted only if the directory actually looks like a taken
+    cache — containing nothing but our own cache files. This fails closed: a
+    malicious or accidental TAKEN_CACHE_DIR value (e.g. "/" or "/etc") can
+    never cause unrelated directories to be deleted via shutil.rmtree().
     """
     try:
         resolved = os.path.realpath(cache_dir)
@@ -277,7 +295,11 @@ def _is_cache_dir_safe(cache_dir):
     if resolved == default_cache or resolved.startswith(default_cache + os.path.sep):
         return True
 
-    return True
+    # Anything else must prove it is a taken cache: it must exist and contain
+    # nothing but our own cache files. A missing directory has nothing to
+    # clear, and refusing surfaces a misconfigured TAKEN_CACHE_DIR instead of
+    # silently reporting "cleared 0".
+    return os.path.isdir(resolved) and _looks_like_taken_cache(resolved)
 
 
 def clear_cache():

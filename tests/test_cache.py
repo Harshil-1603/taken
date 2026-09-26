@@ -149,7 +149,8 @@ def test_clear_cache_flag_removes_dir(cache_env, counting_run, tmp_path, capsys)
     assert f"cleared 2 cache entries ({cache_dir})" in out
 
 
-def test_clear_cache_flag_empty_cache(cache_env, capsys):
+def test_clear_cache_flag_empty_cache(cache_env, tmp_path, capsys):
+    (tmp_path / "cache").mkdir()
     assert cli.main(["--clear-cache"]) == 0
     assert "cleared 0 cache entries" in capsys.readouterr().out
 
@@ -160,6 +161,9 @@ def test_clear_cache_flag_empty_cache(cache_env, capsys):
         "/",
         "~",
         "/home",
+        "/etc",
+        "/tmp/evil",
+        "relative/path",
     ],
 )
 def test_clear_cache_rejects_unsafe_path(unsafe_path, capsys, monkeypatch):
@@ -167,3 +171,29 @@ def test_clear_cache_rejects_unsafe_path(unsafe_path, capsys, monkeypatch):
     monkeypatch.setenv("TAKEN_CACHE_DIR", unsafe_path)
     assert cli.main(["--clear-cache"]) == 1
     assert "not a safe path" in capsys.readouterr().err
+
+
+def test_clear_cache_accepts_custom_dir_with_only_cache_files(
+    cache_env, counting_run, tmp_path, capsys
+):
+    """A custom TAKEN_CACHE_DIR holding only taken cache files may be cleared."""
+    checks.gh_api("repos/octo/repo")
+    cache_dir = tmp_path / "cache"
+    assert (cache_dir / "v2").is_dir()
+    assert cli.main(["--clear-cache"]) == 0
+    assert not cache_dir.exists()
+    assert "cleared 1 cache entry" in capsys.readouterr().out
+
+
+def test_clear_cache_refuses_custom_dir_with_foreign_files(
+    cache_env, counting_run, tmp_path, capsys
+):
+    """A custom TAKEN_CACHE_DIR containing non-cache files must not be deleted."""
+    checks.gh_api("repos/octo/repo")
+    cache_dir = tmp_path / "cache"
+    precious = cache_dir / "precious.json"
+    precious.write_text('{"do": "not delete"}')
+    assert cli.main(["--clear-cache"]) == 1
+    assert "not a safe path" in capsys.readouterr().err
+    assert precious.exists()
+    assert (cache_dir / "v2").is_dir()

@@ -98,3 +98,28 @@ def test_no_cache_flag_disables_cache(monkeypatch, tmp_path, capsys):
     assert main(["--no-cache", "bogus"]) == 3
     assert checks._CACHE_ENABLED is False
     assert calls == []
+
+
+def test_concurrent_writes_keep_cache_valid(cache_env, counting_run):
+    import threading
+
+    errors = []
+
+    def worker(n):
+        try:
+            for i in range(10):
+                checks.gh_api(f"repos/octo/repo{n}", {"page": str(i)})
+        except Exception as exc:  # noqa: BLE001 - any failure here is the bug
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(n,)) for n in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+    # Every key written by every thread must be present and readable.
+    for n in range(8):
+        for i in range(10):
+            data = checks.gh_api(f"repos/octo/repo{n}", {"page": str(i)})
+            assert data["ok"] is True

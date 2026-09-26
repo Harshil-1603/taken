@@ -150,3 +150,31 @@ def test_score_candidate_explains(monkeypatch):
     points, why = discover.score_candidate(findings, "2026-09-25T00:00:00Z", True)
     assert points == 6
     assert why == ["maintainer replied", "updated 1d ago", "repo pushed 1d ago"]
+
+
+def test_discover_parallel_matches_sequential(faked):
+    seq = discover.discover(label="good first issue", jobs=1)
+    par = discover.discover(label="good first issue", jobs=8)
+    assert [(r["target"], r["score"]) for r in par] == [(r["target"], r["score"]) for r in seq]
+    assert len(par) == 2
+
+
+def test_discover_progress_callback(faked):
+    calls = []
+
+    def track(done, total):
+        calls.append((done, total))
+
+    results = discover.discover(label="good first issue", jobs=4, on_progress=track)
+    assert results  # sanity: the fake still yields candidates
+    total = calls[0][1]
+    assert total == 3  # three candidates enter the pool
+    assert calls[0] == (0, total)
+    dones = [done for done, _ in calls[1:]]
+    assert sorted(dones) == [1, 2, 3]
+    assert all(t == total for _, t in calls)
+
+
+def test_discover_jobs_flag_rejected_when_zero(faked, capsys):
+    assert main(["--discover", "--label", "good first issue", "--jobs", "0"]) == 3
+    assert "--jobs must be at least 1" in capsys.readouterr().err

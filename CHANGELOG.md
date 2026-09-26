@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.4.0] - 2026-09-26
+
+### Added
+- Discover mode is now parallel: candidates are verified with 8 workers by
+  default (`--jobs N` to tune), cutting a full 40-candidate run from minutes
+  to under a minute. The API cache is thread-safe (locked, atomic writes).
+- Discover mode shows a progress bar on stderr while verifying, so long runs
+  give live feedback. `--no-progress` hides it; `--json` output on stdout is
+  unaffected.
+
 ## [0.3.0] - 2026-09-26
 
 ### Added

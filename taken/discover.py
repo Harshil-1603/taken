@@ -7,6 +7,7 @@ responsiveness, the signal that best predicts whether volunteering will go
 anywhere. No aggregator filters on that.
 """
 
+import concurrent.futures
 from datetime import datetime, timedelta, timezone
 
 from . import checks
@@ -15,6 +16,7 @@ from .verdict import GO, decide
 SEARCH_LABELS = ["good first issue", "good-first-issue", "beginner friendly", "help wanted"]
 SEARCH_PER_PAGE = 50
 VERIFY_POOL = 40
+DEFAULT_JOBS = 8
 
 
 def build_query(label, language=None, updated_after=None):
@@ -78,8 +80,43 @@ def score_candidate(findings, updated_at, engaged):
     return points, why
 
 
-def discover(limit=10, language=None, label=None, min_stars=0, me=None):
+def _verify_candidate(owner, repo, number, item, min_stars, me):
+    """Run the full check on one candidate. Returns the ranked entry or None.
+
+    Kept separate so the pool can be verified concurrently; each call only
+    does idempotent GETs through the (thread-safe) cache.
+    """
+    try:
+        findings = checks.run_checks(owner, repo, number, me=me)
+    except checks.TakenError:
+        return None  # fail-closed per issue; keep scanning the rest
+    verdict, reasons = decide(findings)
+    if verdict != GO:
+        return None
+    if (findings["repo_health"].get("stars") or 0) < min_stars:
+        return None
+    comments = checks.fetch_comments(owner, repo, number)
+    engaged = maintainer_engaged(findings["issue"], comments)
+    points, why = score_candidate(findings, item.get("updated_at"), engaged)
+    return {
+        "target": f"{owner}/{repo}#{number}",
+        "score": points,
+        "why": why,
+        "verdict": verdict,
+        "reasons": reasons,
+        "findings": findings,
+        "updated_at": item.get("updated_at") or "",
+    }
+
+
+def discover(
+    limit=10, language=None, label=None, min_stars=0, me=None, jobs=DEFAULT_JOBS, on_progress=None
+):
     """Search, verify, and rank contribution candidates.
+
+    Candidates are verified concurrently (jobs threads). on_progress, when
+    given, is called as on_progress(done, total) from the calling thread as
+    each candidate finishes, so callers can drive a progress bar.
 
     Returns a list of dicts sorted by score (desc), then recency (desc):
     target, score, why, verdict, reasons, findings, updated_at.
@@ -105,36 +142,28 @@ def discover(limit=10, language=None, label=None, min_stars=0, me=None):
         if len(candidates) >= VERIFY_POOL:
             break
 
+    total = len(candidates)
+    if on_progress is not None:
+        on_progress(0, total)
     ranked = []
-    for owner, repo, number, item in candidates:
-        try:
-            findings = checks.run_checks(owner, repo, number, me=me)
-        except checks.TakenError:
-            continue  # fail-closed per issue; keep scanning the rest
-        verdict, reasons = decide(findings)
-        if verdict != GO:
-            continue
-        if (findings["repo_health"].get("stars") or 0) < min_stars:
-            continue
-        comments = checks.fetch_comments(owner, repo, number)
-        engaged = maintainer_engaged(findings["issue"], comments)
-        points, why = score_candidate(findings, item.get("updated_at"), engaged)
-        ranked.append(
-            {
-                "target": f"{owner}/{repo}#{number}",
-                "score": points,
-                "why": why,
-                "verdict": verdict,
-                "reasons": reasons,
-                "findings": findings,
-                "updated_at": item.get("updated_at") or "",
-            }
-        )
+    workers = max(1, jobs)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {
+            pool.submit(_verify_candidate, owner, repo, number, item, min_stars, me): (
+                owner,
+                repo,
+                number,
+            )
+            for owner, repo, number, item in candidates
+        }
+        done = 0
+        for future in concurrent.futures.as_completed(futures):
+            done += 1
+            if on_progress is not None:
+                on_progress(done, total)
+            entry = future.result()
+            if entry is not None:
+                ranked.append(entry)
     ranked.sort(key=lambda r: r["updated_at"])
     ranked.sort(key=lambda r: -r["score"])
     return ranked[:limit]
-
-
-def _comments(owner, repo, number):
-    endpoint = f"repos/{owner}/{repo}/issues/{number}/comments"
-    return checks._require_list(checks.gh_api(endpoint, {"per_page": "100"}), endpoint)

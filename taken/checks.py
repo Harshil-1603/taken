@@ -9,6 +9,8 @@ import json
 import os
 import re
 import subprocess
+import tempfile
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -18,6 +20,10 @@ CACHE_TTL_SECONDS = 3600
 
 # Set to False (via --no-cache) to bypass the response cache.
 _CACHE_ENABLED = True
+
+# Guards the cache file: discover mode verifies candidates in threads, and a
+# read-modify-write on one JSON file is not atomic.
+_CACHE_LOCK = threading.Lock()
 
 PR_URL_RE = re.compile(r"^https?://github\.com/([^/]+)/([^/]+)/pull/(\d+)")
 
@@ -116,8 +122,9 @@ def _cache_key(endpoint, params):
 
 def _cache_read(key):
     try:
-        with open(_cache_path(), encoding="utf-8") as fh:
-            entries = json.load(fh)
+        with _CACHE_LOCK:
+            with open(_cache_path(), encoding="utf-8") as fh:
+                entries = json.load(fh)
         entry = entries.get(key)
         if not entry:
             return None
@@ -131,15 +138,25 @@ def _cache_read(key):
 def _cache_write(key, data):
     try:
         path = _cache_path()
-        try:
-            with open(path, encoding="utf-8") as fh:
-                entries = json.load(fh)
-        except (OSError, ValueError):
-            entries = {}
-        entries[key] = {"fetched_at": time.time(), "data": data}
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as fh:
-            json.dump(entries, fh)
+        with _CACHE_LOCK:
+            try:
+                with open(path, encoding="utf-8") as fh:
+                    entries = json.load(fh)
+            except (OSError, ValueError):
+                entries = {}
+            entries[key] = {"fetched_at": time.time(), "data": data}
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            # Atomic write: concurrent threads must never see a half-written cache.
+            fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".cache-")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                    json.dump(entries, fh)
+                os.replace(tmp, path)
+            except OSError:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
     except OSError:
         pass  # the cache must never break the tool
 

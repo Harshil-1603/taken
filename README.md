@@ -86,6 +86,11 @@ Each line explains its own score. `--label` restricts the search to one
 label instead of the default set (`good first issue`, `good-first-issue`,
 `beginner friendly`, `help wanted`).
 
+Candidates are verified in parallel (8 workers by default; `--jobs N`
+tunes it). A progress bar on stderr shows live feedback during the run;
+`--no-progress` hides it. The bar never touches stdout, so `--json`
+stays script-friendly.
+
 ## JSON output
 
 `taken --json owner/repo#123` prints an object with three keys:

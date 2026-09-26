@@ -82,6 +82,19 @@ def build_parser():
         metavar="N",
         help="discover: only consider repos with at least N stars",
     )
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=discover.DEFAULT_JOBS,
+        metavar="N",
+        help="discover: verify candidates with N parallel workers "
+        f"(default: {discover.DEFAULT_JOBS})",
+    )
+    parser.add_argument(
+        "--no-progress",
+        action="store_true",
+        help="discover: hide the progress bar",
+    )
     parser.add_argument("--json", action="store_true", help="print the full findings as JSON")
     parser.add_argument(
         "--me",
@@ -185,6 +198,28 @@ def format_discover_line(result):
 
 def run_discover(args):
     """Search, verify, and rank the top candidates."""
+    if args.jobs < 1:
+        print("error: --jobs must be at least 1", file=sys.stderr)
+        return 3
+    show_progress = not args.no_progress and sys.stderr.isatty()
+    bar = None
+    if show_progress:
+        from tqdm import tqdm
+
+        bar = tqdm(
+            total=0,
+            desc="verifying candidates",
+            unit="issue",
+            file=sys.stderr,
+            bar_format="{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt}",
+        )
+
+    def on_progress(done, total):
+        if bar is not None:
+            bar.total = total
+            bar.n = done
+            bar.refresh()
+
     try:
         results = discover.discover(
             limit=args.limit,
@@ -192,10 +227,16 @@ def run_discover(args):
             label=args.label,
             min_stars=args.min_stars,
             me=args.me,
+            jobs=args.jobs,
+            on_progress=on_progress if bar is not None else None,
         )
     except checks.TakenError as exc:
+        if bar is not None:
+            bar.close()
         print(f"error: {exc}", file=sys.stderr)
         return 3
+    if bar is not None:
+        bar.close()
     if not results:
         print("no candidates passed verification", file=sys.stderr)
         return 0

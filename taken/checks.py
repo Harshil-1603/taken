@@ -5,8 +5,10 @@ authentication and never sees, stores, or handles any token.
 """
 
 import base64
+import hashlib
 import json
 import os
+import random
 import re
 import subprocess
 import tempfile
@@ -21,9 +23,11 @@ CACHE_TTL_SECONDS = 3600
 # Set to False (via --no-cache) to bypass the response cache.
 _CACHE_ENABLED = True
 
-# Guards the cache file: discover mode verifies candidates in threads, and a
-# read-modify-write on one JSON file is not atomic.
-_CACHE_LOCK = threading.Lock()
+# In-process cache in front of the file cache: within one run, repeated
+# reads of the same key (e.g. repo health for several issues in one repo)
+# never touch disk at all.
+_MEM_CACHE = {}
+_MEM_LOCK = threading.Lock()
 
 PR_URL_RE = re.compile(r"^https?://github\.com/([^/]+)/([^/]+)/pull/(\d+)")
 
@@ -105,12 +109,29 @@ def _require_list(value, endpoint):
     return value
 
 
-def _cache_path():
+def _cache_dir():
     """Location of the API response cache. Overridable via TAKEN_CACHE_DIR."""
-    base = os.environ.get("TAKEN_CACHE_DIR") or os.path.join(
+    return os.environ.get("TAKEN_CACHE_DIR") or os.path.join(
         os.path.expanduser("~"), ".cache", "taken"
     )
-    return os.path.join(base, "api_cache.json")
+
+
+def _cache_path():
+    """Legacy single-file cache location (kept for one migration step)."""
+    return os.path.join(_cache_dir(), "api_cache.json")
+
+
+def _cache_file(key):
+    """One file per cache key.
+
+    The old design kept every entry in a single JSON file, so each write
+    under threads re-read and re-wrote tens of megabytes while holding a
+    lock, serializing all workers. Per-key files with atomic replace need
+    no lock at all: concurrent writers to different keys never conflict,
+    and same-key races resolve to last-writer-wins with a valid file.
+    """
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
+    return os.path.join(_cache_dir(), "v2", digest + ".json")
 
 
 def _cache_key(endpoint, params):
@@ -120,43 +141,77 @@ def _cache_key(endpoint, params):
     return "|".join(parts)
 
 
-def _cache_read(key):
+def _mem_get(key):
+    with _MEM_LOCK:
+        entry = _MEM_CACHE.get(key)
+    if not entry:
+        return None
+    if time.time() - entry["fetched_at"] > CACHE_TTL_SECONDS:
+        return None
+    return entry["data"]
+
+
+def _mem_put(key, entry):
+    with _MEM_LOCK:
+        _MEM_CACHE[key] = entry
+
+
+def _sweep_expired():
+    """Best-effort removal of stale cache files, run probabilistically."""
     try:
-        with _CACHE_LOCK:
-            with open(_cache_path(), encoding="utf-8") as fh:
-                entries = json.load(fh)
-        entry = entries.get(key)
-        if not entry:
-            return None
+        now = time.time()
+        for name in os.listdir(os.path.join(_cache_dir(), "v2")):
+            if not name.endswith(".json"):
+                continue
+            path = os.path.join(_cache_dir(), "v2", name)
+            try:
+                if now - os.path.getmtime(path) > CACHE_TTL_SECONDS:
+                    os.unlink(path)
+            except OSError:
+                pass
+    except OSError:
+        pass
+
+
+def _cache_read(key):
+    cached = _mem_get(key)
+    if cached is not None:
+        return cached
+    try:
+        with open(_cache_file(key), encoding="utf-8") as fh:
+            entry = json.load(fh)
         if time.time() - entry["fetched_at"] > CACHE_TTL_SECONDS:
             return None
-        return entry["data"]
     except (OSError, ValueError, KeyError, TypeError):
         return None
+    _mem_put(key, entry)
+    return entry["data"]
 
 
 def _cache_write(key, data):
+    entry = {"fetched_at": time.time(), "data": data}
+    _mem_put(key, entry)
     try:
-        path = _cache_path()
-        with _CACHE_LOCK:
+        path = _cache_file(key)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        # Atomic write: readers never see a half-written file.
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".cache-")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(entry, fh)
+            os.replace(tmp, path)
+        except OSError:
             try:
-                with open(path, encoding="utf-8") as fh:
-                    entries = json.load(fh)
-            except (OSError, ValueError):
-                entries = {}
-            entries[key] = {"fetched_at": time.time(), "data": data}
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            # Atomic write: concurrent threads must never see a half-written cache.
-            fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".cache-")
-            try:
-                with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                    json.dump(entries, fh)
-                os.replace(tmp, path)
+                os.unlink(tmp)
             except OSError:
-                try:
-                    os.unlink(tmp)
-                except OSError:
-                    pass
+                pass
+        # Drop the legacy single-file cache the first time we write new style.
+        try:
+            os.unlink(_cache_path())
+        except OSError:
+            pass
+        if random.random() < 0.05:
+            _sweep_expired()
     except OSError:
         pass  # the cache must never break the tool
 

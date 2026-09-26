@@ -18,6 +18,7 @@ class Proc:
 def cache_env(monkeypatch, tmp_path):
     monkeypatch.setenv("TAKEN_CACHE_DIR", str(tmp_path / "cache"))
     monkeypatch.setattr(checks, "_CACHE_ENABLED", True)
+    checks._MEM_CACHE.clear()
 
 
 @pytest.fixture
@@ -48,11 +49,13 @@ def test_params_are_part_of_cache_key(cache_env, counting_run):
 def test_stale_entry_refetches(cache_env, counting_run, tmp_path):
     checks.gh_api("repos/octo/repo")
     assert len(counting_run) == 1
-    cache_file = tmp_path / "cache" / "api_cache.json"
-    entries = json.loads(cache_file.read_text())
-    key = next(iter(entries))
-    entries[key]["fetched_at"] -= checks.CACHE_TTL_SECONDS + 1
-    cache_file.write_text(json.dumps(entries))
+    v2 = tmp_path / "cache" / "v2"
+    (cache_file,) = [p for p in v2.iterdir() if p.suffix == ".json"]
+    entry = json.loads(cache_file.read_text())
+    entry["fetched_at"] -= checks.CACHE_TTL_SECONDS + 1
+    cache_file.write_text(json.dumps(entry))
+    # Drop the in-memory copy so the stale file entry is actually consulted.
+    checks._MEM_CACHE.clear()
     checks.gh_api("repos/octo/repo")
     assert len(counting_run) == 2
 
@@ -65,9 +68,19 @@ def test_cache_disabled_refetches_every_time(cache_env, counting_run, monkeypatc
 
 
 def test_corrupt_cache_file_is_ignored(cache_env, counting_run, tmp_path):
-    cache_dir = tmp_path / "cache"
-    cache_dir.mkdir()
-    (cache_dir / "api_cache.json").write_text("not json{{{")
+    cache_dir = tmp_path / "cache" / "v2"
+    cache_dir.mkdir(parents=True)
+    (cache_dir / "deadbeef.json").write_text("not json{{{")
+    assert checks.gh_api("repos/octo/repo") == {"ok": True, "n_calls": 1}
+    assert len(counting_run) == 1
+
+
+def test_memory_cache_avoids_disk_reads(cache_env, counting_run, tmp_path):
+    checks.gh_api("repos/octo/repo")
+    assert len(counting_run) == 1
+    v2 = tmp_path / "cache" / "v2"
+    (cache_file,) = [p for p in v2.iterdir() if p.suffix == ".json"]
+    cache_file.unlink()  # the file is gone; memory must still serve the key
     assert checks.gh_api("repos/octo/repo") == {"ok": True, "n_calls": 1}
     assert len(counting_run) == 1
 

@@ -19,6 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - CI smoke job: builds the wheel, installs it into a fresh venv, and
   exercises the installed `taken` entry point (--version, --help, and a
   malformed target expecting exit code 3).
+- README documents the --json output schema (field names and verdict values).
 - README with usage, three real examples, and the verdict rules;
   CONTRIBUTING guide; pull request template.
 - GitHub Actions CI workflow (`.github/workflows/ci.yml`): runs `ruff check`,

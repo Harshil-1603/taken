@@ -46,6 +46,22 @@ Useful flags:
 Exit codes: 0 means GO, 1 means TAKEN, 2 means CAUTION, 3 means something
 broke (bad target, no `gh`, API error).
 
+## JSON output
+
+`taken --json owner/repo#123` prints an object with three keys:
+
+- `verdict`: one of `GO`, `TAKEN`, `CAUTION`
+- `reasons`: list of human-readable strings explaining the verdict
+- `findings`: the raw check results:
+  - `target`: e.g. `owner/repo#123`
+  - `issue`: `number`, `state`, `title`, `labels`, `assignees`,
+    `comment_count`, `author`, `url`, `created_at`
+  - `linked_prs`: list of `number`, `title`, `state`, `merged`, `author`, `url`
+  - `claimants`: list of `author`, `date`, `pattern`, `snippet`, `url`
+  - `ai_policy`: `verdict` (`ban`, `disclosure-required`, or `none-found`),
+    `snippet`, `source`
+  - `repo_health`: `pushed_at`, `pushed_recently`, `recent_merges`, `stars`
+
 ## Examples
 
 An issue with a PR already fixing it:

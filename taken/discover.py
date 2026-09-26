@@ -109,7 +109,10 @@ def _verify_candidate(owner, repo, number, item, min_contributors, me):
         return None, None
     if (findings["repo_health"].get("contributors") or 0) < min_contributors:
         return None, None
-    comments = checks.fetch_comments(owner, repo, number)
+    try:
+        comments = checks.fetch_comments(owner, repo, number)
+    except checks.TakenError as exc:
+        return None, exc  # one bad comments fetch must not abort the run
     engaged = maintainer_engaged(findings["issue"], comments, me=me)
     points, why = score_candidate(findings, item.get("updated_at"), engaged)
     return {

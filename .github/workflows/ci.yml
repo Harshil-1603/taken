@@ -25,7 +25,9 @@ jobs:
       - name: Run ruff format check
         run: uv run --frozen ruff format --check
       - name: Run tests
-        run: uv run --frozen pytest
+        run: uv run --frozen pytest -n auto --cov=taken --cov-report=term-missing
+      - name: Run mypy
+        run: uv run --frozen mypy taken/
 
   smoke:
     runs-on: ubuntu-latest

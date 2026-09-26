@@ -8,9 +8,10 @@ anywhere. No aggregator filters on that.
 """
 
 import concurrent.futures
+import threading
 from datetime import datetime, timedelta, timezone
 
-from . import checks
+from . import checks, graphql
 from .verdict import GO, decide
 
 SEARCH_LABELS = ["good first issue", "good-first-issue", "beginner friendly", "help wanted"]
@@ -22,6 +23,23 @@ DEFAULT_JOBS = 8
 # A random "+1" from a passerby (NONE/CONTRIBUTOR/...) is not maintainer
 # engagement and must not earn the +3 "maintainer replied" points.
 MAINTAINER_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
+
+_thread_state = threading.local()
+
+
+def _thread_graphql_session():
+    """One persistent GraphQL session per verify-pool thread.
+
+    graphql.get_session() shares a single keep-alive connection, which is
+    not safe to use from the pool's worker threads; each thread keeps its
+    own session (and its own connection) instead. The token is still read
+    once per thread from `gh auth token` and held in memory only.
+    """
+    session = getattr(_thread_state, "graphql_session", None)
+    if session is None:
+        session = graphql.PersistentGraphQLSession()
+        _thread_state.graphql_session = session
+    return session
 
 
 def build_query(label, language=None, updated_after=None):
@@ -89,11 +107,14 @@ def score_candidate(findings, updated_at, engaged):
     return points, why
 
 
-def _verify_candidate(owner, repo, number, item, min_contributors, me):
+def _verify_candidate(owner, repo, number, item, min_contributors, me, mode="rest"):
     """Run the full check on one candidate.
 
     Kept separate so the pool can be verified concurrently; each call only
-    does idempotent GETs through the (thread-safe) cache.
+    does idempotent GETs through the (thread-safe) cache. `mode` selects
+    the fetch path: "rest" (default), "graphql" (one query per issue via
+    `gh api graphql`), or "persistent" (GraphQL over a per-thread
+    keep-alive session).
 
     Returns (entry, error): the ranked entry (or None when the candidate
     was filtered by a real verdict), and the TakenError when verification
@@ -101,7 +122,13 @@ def _verify_candidate(owner, repo, number, item, min_contributors, me):
     available" apart from "the tool is broken".
     """
     try:
-        findings = checks.run_checks(owner, repo, number, me=me)
+        if mode in ("graphql", "persistent"):
+            session = _thread_graphql_session() if mode == "persistent" else None
+            findings = graphql.run_checks_graphql(
+                owner, repo, number, me=me, mode=mode, session=session
+            )
+        else:
+            findings = checks.run_checks(owner, repo, number, me=me)
     except checks.TakenError as exc:
         return None, exc  # fail-closed per issue; keep scanning the rest
     verdict, reasons = decide(findings)
@@ -193,6 +220,7 @@ def discover(
     jobs=DEFAULT_JOBS,
     on_progress=None,
     on_searched=None,
+    mode="rest",
 ):
     """Search, verify, and rank contribution candidates.
 
@@ -201,6 +229,8 @@ def discover(
     each candidate finishes, so callers can drive a progress bar.
     on_searched, when given, is called as on_searched([(label, count), ...])
     after the search phase, so callers can report what was searched.
+    mode selects the verification fetch path: "rest" (default), "graphql",
+    or "persistent" (see graphql.fetch_mode).
 
     Returns a DiscoverResults (a list of dicts sorted by score (desc),
     then recency (desc)) with .errors / .total stats, so callers can tell
@@ -223,7 +253,7 @@ def discover(
     workers = max(1, jobs)
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {
-            pool.submit(_verify_candidate, owner, repo, number, item, min_contributors, me): (
+            pool.submit(_verify_candidate, owner, repo, number, item, min_contributors, me, mode): (
                 owner,
                 repo,
                 number,

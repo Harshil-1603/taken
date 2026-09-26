@@ -88,9 +88,9 @@ computed in your browser via GitHub's public API. No login, no install.
     placeholder="type a command, e.g. taken --help"></div>
 </div>
 <p class="term-hint">Try:
-<code data-cmd="taken Exodus-Privacy/exodus#300">taken Exodus-Privacy/exodus#300</code> ·
-<code data-cmd="taken microsoft/vscode#12345">taken microsoft/vscode#12345</code> ·
-<code data-cmd="taken --discover --limit 3">taken --discover --limit 3</code> (demo data)</p>
+<code data-cmd="taken microsoft/scope#1275">taken microsoft/scope#1275</code> ·
+<code data-cmd="taken IBM/mcp-context-forge#5848">taken IBM/mcp-context-forge#5848</code> ·
+<code data-cmd="taken --discover --limit 3">taken --discover --limit 3</code> (sample output)</p>
 
 <h2>Install</h2>
 <p>You need Python 3.10+ and the <a href="https://cli.github.com/">GitHub CLI</a>
@@ -180,12 +180,10 @@ always prints its evidence so you can judge for yourself.</p>
 
   var DISCOVER_DEMO =
     'taken? --discover\n' +
-    '<span class="dim">demo data: live discover would need the search API.</span>\n\n' +
-    '  score  issue                       why\n' +
-    '  -----  --------------------------  ------------------------------\n' +
-    '      6  octocat/hello-world#42      maintainer replied; updated 1d ago\n' +
-    '      4  octocat/other-repo#7        updated 3d ago; repo pushed 2d ago\n' +
-    '      3  octocat/sample-lib#19       maintainer replied; updated 12d ago\n\n' +
+    '<span class="dim">sample output from a real run (yours will differ).</span>\n\n' +
+    '      6  FasterXML/jackson-datatypes-collections#2  maintainer replied; updated 0d ago; repo pushed 1d ago\n' +
+    '      6  padok-team/burrito#42  maintainer replied; updated 0d ago; repo pushed 1d ago\n' +
+    '      6  stefankueng/grepWin#618  maintainer replied; updated 0d ago; repo pushed 0d ago\n\n' +
     '  3 <span class="v-go">GO</span> candidates. Only GO verdicts are ranked.';
 
   function run(raw) {

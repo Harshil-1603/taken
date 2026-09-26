@@ -312,6 +312,28 @@ def test_discover_results_carry_error_stats(monkeypatch):
     assert results.total == 1
 
 
+def test_discover_comments_fetch_failure_is_per_candidate_error(monkeypatch):
+    """A failing comments fetch for one candidate must not abort the run."""
+    items = [search_item(1, 1), search_item(2, 2)]
+    monkeypatch.setattr(checks, "gh_api", make_fake(items, {1: "go", 2: "go"}, {}))
+    real_fetch_comments = checks.fetch_comments
+    calls = []
+
+    def flaky_fetch_comments(owner, repo, number):
+        calls.append(number)
+        # Fail only the post-verdict comments fetch in _verify_candidate
+        # (the second fetch for issue 1); the one inside run_checks succeeds.
+        if number == 1 and calls.count(1) == 2:
+            raise checks.TakenError("comments endpoint 500")
+        return real_fetch_comments(owner, repo, number)
+
+    monkeypatch.setattr(checks, "fetch_comments", flaky_fetch_comments)
+    results = discover.discover(label="good first issue", jobs=1)
+    assert [r["target"] for r in results] == ["octo/repo#2"]
+    assert results.errors == 1
+    assert results.total == 2
+
+
 def test_repo_of():
     assert discover.repo_of({"repository_url": "https://api.github.com/repos/octo/repo"}) == (
         "octo",

@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.1.1] - 2026-09-26
+
+### Added
+- Published to PyPI as `taken-gh` via trusted publishing (GitHub Actions
+  OIDC). Install with `uv tool install taken-gh` or `pipx install taken-gh`;
+  README and the project page now point at PyPI instead of a git URL.
+
 ## [Unreleased]
 
 ### Fixed

@@ -76,9 +76,10 @@ scans comments for people claiming the work, looks at assignees, reads
 CONTRIBUTING.md for AI contribution policies, and checks whether the repo is
 still active. Then it gives a verdict, with the evidence cited.</p>
 
-<h2>Try it</h2>
-<p>A little simulation of the real thing, right here in your browser. Type a
-command and hit enter:</p>
+<h2>Try it live</h2>
+<p>Type any public GitHub issue below and get a <strong>real</strong> verdict,
+computed in your browser via GitHub's public API. No login, no install.
+(Public API: 60 requests/hour, one check uses about 7.)</p>
 <div class="terminal" id="demo-term">
   <div class="term-bar"><span></span><span></span><span></span></div>
   <div class="term-body" id="term-body"></div>
@@ -88,8 +89,8 @@ command and hit enter:</p>
 </div>
 <p class="term-hint">Try:
 <code data-cmd="taken Exodus-Privacy/exodus#300">taken Exodus-Privacy/exodus#300</code> ·
-<code data-cmd="taken snowflakedb/snowflake-cli#3145 --me RogueAlg0">taken snowflakedb/snowflake-cli#3145 --me RogueAlg0</code> ·
-<code data-cmd="taken --discover --limit 3">taken --discover --limit 3</code></p>
+<code data-cmd="taken microsoft/vscode#12345">taken microsoft/vscode#12345</code> ·
+<code data-cmd="taken --discover --limit 3">taken --discover --limit 3</code> (demo data)</p>
 
 <h2>Install</h2>
 <p>You need Python 3.10+ and the <a href="https://cli.github.com/">GitHub CLI</a>
@@ -149,6 +150,8 @@ always prints its evidence so you can judge for yourself.</p>
   Built with AI assistance, openly disclosed.
 </footer>
 
+<script>window.TAKEN_VERSION = '0.5.0';</script>
+<script src="try.js"></script>
 <script>
 (function () {
   var body = document.getElementById('term-body');
@@ -165,57 +168,25 @@ always prints its evidence so you can judge for yourself.</p>
     body.appendChild(div);
     body.scrollTop = body.scrollHeight;
   }
-  var HELP = '<span class="dim">usage: taken [owner/repo#123 | owner/repo | --discover] [flags]\n\n' +
-    'demo commands:\n' +
-    '  taken Exodus-Privacy/exodus#300\n' +
-    '  taken chahe-dridi/vscode-agent-bell#200\n' +
-    '  taken snowflakedb/snowflake-cli#3145 --me RogueAlg0\n' +
-    '  taken --discover --limit 3\n' +
+  var HELP = '<span class="dim">usage: taken [owner/repo#123 | issue URL] [--me login]\n\n' +
+    'live commands (real GitHub API checks, no login):\n' +
+    '  taken owner/repo#123\n' +
+    '  taken https://github.com/owner/repo/issues/123\n' +
+    '  taken owner/repo#123 --me mylogin   (ignore your own comments)\n\n' +
+    'other commands:\n' +
+    '  taken --discover --limit 3   (demo data, not live)\n' +
     '  taken --version\n' +
     '  clear</span>';
 
-  var COMMANDS = {
-    'taken --help': HELP,
-    'help': HELP,
-    'taken --version': 'taken 0.5.0',
-    'taken exodus-privacy/exodus#300':
-      'taken? Exodus-Privacy/exodus#300\n' +
-      'verdict: <span class="v-taken">TAKEN</span>\n\n' +
-      '  issue: open, "Bump max_length for app version strings"\n' +
-      '  linked PRs: #700 (open) by Manny7717\n' +
-      '  assignees: none   claimants: none\n' +
-      '  AI policy: none-found   repo: active\n\n' +
-      '  why:\n' +
-      '    - open PR #700 already covers this:\n' +
-      '      https://github.com/Exodus-Privacy/exodus/pull/700',
-    'taken chahe-dridi/vscode-agent-bell#200':
-      'taken? chahe-dridi/vscode-agent-bell#200\n' +
-      'verdict: <span class="v-taken">TAKEN</span>\n\n' +
-      '  issue: open, "Add a bell sound when the agent finishes"\n' +
-      '  linked PRs: none   claimants: none\n' +
-      '  assignees: dk5488\n' +
-      '  AI policy: none-found   repo: active\n\n' +
-      '  why:\n' +
-      '    - assigned to: dk5488',
-    'taken snowflakedb/snowflake-cli#3145 --me roguealg0':
-      'taken? snowflakedb/snowflake-cli#3145\n' +
-      'verdict: <span class="v-go">GO</span>\n\n' +
-      '  issue: open, "Relax pydantic pin for 2.13 compat"\n' +
-      '  linked PRs: none   assignees: none\n' +
-      '  claimants: none (your own comment ignored via --me)\n' +
-      '  AI policy: none-found   repo: active\n\n' +
-      '  why:\n' +
-      '    - no linked PRs, no assignees, no claimants, repo is active',
-    'taken --discover --limit 3':
-      'taken? --discover\n' +
-      '<span class="dim">verifying 40 candidates...</span>\n\n' +
-      '  score  issue                       why\n' +
-      '  -----  --------------------------  ------------------------------\n' +
-      '      6  octocat/hello-world#42      maintainer replied; updated 1d ago\n' +
-      '      4  octocat/other-repo#7        updated 3d ago; repo pushed 2d ago\n' +
-      '      3  octocat/sample-lib#19       maintainer replied; updated 12d ago\n\n' +
-      '  3 <span class="v-go">GO</span> candidates. Only GO verdicts are ranked.'
-  };
+  var DISCOVER_DEMO =
+    'taken? --discover\n' +
+    '<span class="dim">demo data: live discover would need the search API.</span>\n\n' +
+    '  score  issue                       why\n' +
+    '  -----  --------------------------  ------------------------------\n' +
+    '      6  octocat/hello-world#42      maintainer replied; updated 1d ago\n' +
+    '      4  octocat/other-repo#7        updated 3d ago; repo pushed 2d ago\n' +
+    '      3  octocat/sample-lib#19       maintainer replied; updated 12d ago\n\n' +
+    '  3 <span class="v-go">GO</span> candidates. Only GO verdicts are ranked.';
 
   function run(raw) {
     var cmd = raw.trim();
@@ -224,20 +195,44 @@ always prints its evidence so you can judge for yourself.</p>
     history.push(raw); hIndex = history.length;
     var key = cmd.toLowerCase();
     if (key === 'clear') { body.innerHTML = ''; return; }
-    var out = COMMANDS[key];
-    if (out === undefined) {
-      print('<span class="dim">unknown command in this demo. Try: taken --help</span>');
+    if (key === 'taken --help' || key === 'help') { print(HELP); return; }
+    if (key === 'taken --version') { print('taken 0.5.0 (live web port)'); return; }
+    if (key.indexOf('taken --discover') === 0) {
+      print('<span class="dim">checking...</span>');
+      var dSpinner = body.lastChild;
+      setTimeout(function () {
+        if (dSpinner.parentNode === body) body.removeChild(dSpinner);
+        print(DISCOVER_DEMO);
+      }, 450);
       return;
     }
-    print('<span class="dim">checking...</span>');
+    var m = cmd.match(/^taken\s+(.+)$/i);
+    if (!m) {
+      print('<span class="dim">unknown command. Try: taken --help</span>');
+      return;
+    }
+    var rest = m[1].trim();
+    var meMatch = rest.match(/--me\s+([^\s]+)/i);
+    var me = meMatch ? meMatch[1] : null;
+    var target = rest.replace(/--me\s+[^\s]+/i, '').trim();
+    if (!target || target.charAt(0) === '-') {
+      print('<span class="dim">need an issue target: taken owner/repo#123</span>');
+      return;
+    }
+    if (!window.TakenLive) {
+      print('<span class="dim">live engine failed to load. Check your connection and reload.</span>');
+      return;
+    }
+    print('<span class="dim">checking live via GitHub\'s public API...</span>');
     var spinner = body.lastChild;
-    setTimeout(function () {
+    window.TakenLive.runCheck(target, me).then(function (r) {
       if (spinner.parentNode === body) body.removeChild(spinner);
-      print(out);
-    }, 450);
+      if (r.error) print('<span class="v-caution">error: ' + esc(r.error) + '</span>');
+      else print(r.html);
+    });
   }
 
-  print('<span class="dim">taken? demo terminal. Type a command below, e.g.</span>');
+  print('<span class="dim">taken? live terminal. Real checks via GitHub\'s public API, e.g.</span>');
   print('<span class="cmd">$ taken --help</span>');
   print(HELP);
 

@@ -18,6 +18,9 @@ class Proc:
 def cache_env(monkeypatch, tmp_path):
     monkeypatch.setenv("TAKEN_CACHE_DIR", str(tmp_path / "cache"))
     monkeypatch.setattr(checks, "_CACHE_ENABLED", True)
+    # Pre-seed the memoized identity so these tests don't pay for a lookup.
+    monkeypatch.setattr(checks, "_IDENTITY", "octocat")
+    monkeypatch.setattr(checks, "_IDENTITY_FETCHED", True)
     checks._MEM_CACHE.clear()
 
 
@@ -197,3 +200,89 @@ def test_clear_cache_refuses_custom_dir_with_foreign_files(
     assert "not a safe path" in capsys.readouterr().err
     assert precious.exists()
     assert (cache_dir / "v2").is_dir()
+
+
+def test_cache_misses_after_identity_switch(monkeypatch, tmp_path):
+    """Switching gh identity must not serve the previous identity's entries."""
+    monkeypatch.setenv("TAKEN_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setattr(checks, "_CACHE_ENABLED", True)
+    monkeypatch.setattr(checks, "_IDENTITY_FETCHED", False)
+    monkeypatch.setattr(checks, "_IDENTITY", None)
+    checks._MEM_CACHE.clear()
+
+    logins = ["alice"]
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[:3] == ["gh", "api", "user"]:
+            return Proc(logins[0] + "\n")
+        return Proc(json.dumps({"who": logins[0], "n": len(calls)}))
+
+    monkeypatch.setattr(checks.subprocess, "run", fake_run)
+
+    first = checks.gh_api("repos/octo/repo")
+    assert first == {"who": "alice", "n": 2}  # identity lookup + real call
+    assert checks.gh_api("repos/octo/repo") == first  # cache hit, same identity
+
+    # Simulate a fresh process after `gh auth switch`, sharing the disk cache.
+    logins[0] = "bob"
+    monkeypatch.setattr(checks, "_IDENTITY_FETCHED", False)
+    monkeypatch.setattr(checks, "_IDENTITY", None)
+    checks._MEM_CACHE.clear()
+
+    third = checks.gh_api("repos/octo/repo")
+    assert third["who"] == "bob"  # miss: refetched, never alice's data
+    assert third != first
+
+
+def test_cache_skipped_when_identity_unknown(monkeypatch, tmp_path):
+    """Fail closed: no caching at all when the gh identity can't be determined."""
+    monkeypatch.setenv("TAKEN_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setattr(checks, "_CACHE_ENABLED", True)
+    monkeypatch.setattr(checks, "_IDENTITY_FETCHED", False)
+    monkeypatch.setattr(checks, "_IDENTITY", None)
+    checks._MEM_CACHE.clear()
+
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[:3] == ["gh", "api", "user"]:
+            proc = Proc("")
+            proc.returncode = 1
+            proc.stderr = "gh: not authenticated"
+            return proc
+        return Proc(json.dumps({"ok": True}))
+
+    monkeypatch.setattr(checks.subprocess, "run", fake_run)
+
+    checks.gh_api("repos/octo/repo")
+    checks.gh_api("repos/octo/repo")
+    real_calls = [c for c in calls if c[:3] != ["gh", "api", "user"]]
+    assert len(real_calls) == 2
+    assert len(checks._MEM_CACHE) == 0
+
+
+def test_identity_lookup_memoized(monkeypatch, tmp_path):
+    """`gh api user` runs once per process, not once per API call."""
+    monkeypatch.setenv("TAKEN_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setattr(checks, "_CACHE_ENABLED", True)
+    monkeypatch.setattr(checks, "_IDENTITY_FETCHED", False)
+    monkeypatch.setattr(checks, "_IDENTITY", None)
+    checks._MEM_CACHE.clear()
+
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[:3] == ["gh", "api", "user"]:
+            return Proc("OctoCat\n")
+        return Proc(json.dumps({"ok": True}))
+
+    monkeypatch.setattr(checks.subprocess, "run", fake_run)
+
+    checks.gh_api("repos/octo/repo")
+    checks.gh_api("repos/octo/repo")
+    identity_calls = [c for c in calls if c[:3] == ["gh", "api", "user"]]
+    assert len(identity_calls) == 1

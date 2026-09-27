@@ -155,6 +155,9 @@ _TRANSIENT_5XX_RE = re.compile(
 )
 _SECONDARY_RATE_LIMIT_RE = re.compile(r"secondary rate limit", re.IGNORECASE)
 _RETRY_AFTER_RE = re.compile(r"retry-?after[:\s]+(\d+)", re.IGNORECASE)
+# A bare "404" substring also matches IDs like 40412; require a word boundary
+# so only a real HTTP 404 status is treated as not-found.
+_HTTP_404_RE = re.compile(r"\b404\b")
 
 
 def _retry_after_seconds(err):
@@ -234,6 +237,48 @@ def _cache_key(endpoint, params):
     for key in sorted(params or {}):
         parts.append(f"{key}={(params or {})[key]}")
     return "|".join(parts)
+
+
+_IDENTITY = None
+_IDENTITY_FETCHED = False
+
+
+def _github_identity():
+    """Return the authenticated `gh` login (lowercased), memoized per process.
+
+    Cache entries are namespaced by identity so that switching identities
+    (`gh auth switch`, or a shared TAKEN_CACHE_DIR on a shared machine)
+    cannot serve one identity's cached data to another. Returns None when
+    the identity cannot be determined; callers fail closed in that case.
+    """
+    global _IDENTITY, _IDENTITY_FETCHED
+    if _IDENTITY_FETCHED:
+        return _IDENTITY
+    _IDENTITY_FETCHED = True
+    try:
+        proc = subprocess.run(
+            ["gh", "api", "user", "--jq", ".login"],
+            capture_output=True,
+            text=True,
+            timeout=API_TIMEOUT,
+        )
+        login = (proc.stdout or "").strip().lower()
+        _IDENTITY = login if proc.returncode == 0 and login else None
+    except Exception:
+        _IDENTITY = None
+    return _IDENTITY
+
+
+def _namespaced_key(key):
+    """Bind a cache key to the authenticated GitHub identity.
+
+    Returns None when the identity is unknown; the cache then behaves as a
+    permanent miss (fail closed) rather than risk cross-identity leakage.
+    """
+    identity = _github_identity()
+    if identity is None:
+        return None
+    return f"github-user:{identity}|{key}"
 
 
 def _mem_get(key):
@@ -347,6 +392,9 @@ def clear_cache():
 
 
 def _cache_read(key):
+    key = _namespaced_key(key)
+    if key is None:
+        return None
     cached = _mem_get(key)
     if cached is not None:
         return cached
@@ -362,6 +410,9 @@ def _cache_read(key):
 
 
 def _cache_write(key, data):
+    key = _namespaced_key(key)
+    if key is None:
+        return
     entry = {"fetched_at": time.time(), "data": data}
     _mem_put(key, entry)
     try:
@@ -451,8 +502,8 @@ def gh_api(endpoint, params=None):
         if proc.returncode == 0:
             break
         err = (proc.stderr or "").strip()
-        if "404" in err or "Not Found" in err:
-            raise NotFoundError(f"not found: {endpoint}")
+        # Rate-limit signals first: a throttled response may cite numeric IDs
+        # (e.g. installation 40412) that must not be misread as HTTP 404 below.
         if _is_rate_limited(err):
             attempt += 1
             if attempt >= RETRY_ATTEMPTS:
@@ -466,6 +517,8 @@ def gh_api(endpoint, params=None):
                 delay = RETRY_BASE_DELAY * (2 ** (attempt - 1)) + random.uniform(0, 0.5)
             time.sleep(delay)
             continue
+        if _HTTP_404_RE.search(err) or "Not Found" in err:
+            raise NotFoundError(f"not found: {endpoint}")
         attempt += 1
         if not _TRANSIENT_5XX_RE.search(err) or attempt >= RETRY_ATTEMPTS:
             raise TakenError(f"`gh api {endpoint}` failed: {err[:300]}")

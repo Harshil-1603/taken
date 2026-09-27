@@ -42,7 +42,7 @@ def _quiet_run_checks_fake(monkeypatch, *, timeline_pages=1, comment_pages=1):
             if pages_seen["comments"] <= comment_pages:
                 return [
                     {
-                        "user": {"login": "user%d" % i},
+                        "user": {"login": f"user{i}"},
                         "body": "nice idea, thanks",
                         "created_at": "2026-09-01T00:00:00Z",
                     }

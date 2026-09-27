@@ -97,6 +97,12 @@ def build_parser():
     )
     parser.add_argument("--json", action="store_true", help="print the full findings as JSON")
     parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="print an API usage summary (calls per endpoint, cache hits/misses) "
+        "to stderr at the end of the run",
+    )
+    parser.add_argument(
         "--me",
         metavar="LOGIN",
         default=None,
@@ -208,12 +214,27 @@ def main(argv=None):
     if args.discover:
         if args.targets or args.file:
             parser.error("--discover takes no targets")
-        return run_discover(args)
+        return _run_with_stats(run_discover, args, verbose=args.verbose)
     if not targets:
         parser.error("need at least one target, --file, or --discover")
     if len(targets) == 1:
-        return run_single(targets[0], args)
-    return run_batch(targets, args)
+        return _run_with_stats(run_single, targets[0], args, verbose=args.verbose)
+    return _run_with_stats(run_batch, targets, args, verbose=args.verbose)
+
+
+def _run_with_stats(func, *fargs, verbose=False):
+    """Run a CLI command, printing the --verbose API usage summary to stderr.
+
+    The summary goes to stderr so --json stdout stays clean for piping. It
+    prints even when the run fails (exit 3), which is exactly when the
+    numbers matter most.
+    """
+    checks.reset_api_stats()
+    try:
+        return func(*fargs)
+    finally:
+        if verbose:
+            print(checks.api_stats_summary(), file=sys.stderr)
 
 
 def format_discover_line(result):

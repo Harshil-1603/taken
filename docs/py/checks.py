@@ -31,6 +31,56 @@ MAX_SCAN_PAGES = 5
 # Set to False (via --no-cache) to bypass the response cache.
 _CACHE_ENABLED = True
 
+# API usage stats for --verbose: per-endpoint subprocess call counts plus
+# cache hits/misses. Recorded in gh_api (REST) and graphql._cached_or_fetch,
+# the two funnels every GitHub request passes through. Guarded by a lock
+# because --discover verifies candidates from a thread pool.
+_API_STATS: dict[str, Any] = {"calls": {}, "cache_hits": 0, "cache_misses": 0}
+_API_STATS_LOCK = threading.Lock()
+
+
+def reset_api_stats() -> None:
+    """Zero the --verbose API usage counters (called once per CLI run)."""
+    with _API_STATS_LOCK:
+        _API_STATS["calls"].clear()
+        _API_STATS["cache_hits"] = 0
+        _API_STATS["cache_misses"] = 0
+
+
+def record_api_call(endpoint: str) -> None:
+    """Count one real `gh api` subprocess call against an endpoint."""
+    with _API_STATS_LOCK:
+        calls = _API_STATS["calls"]
+        calls[endpoint] = calls.get(endpoint, 0) + 1
+
+
+def record_cache_result(hit: bool) -> None:
+    """Count one cache lookup as a hit or a miss."""
+    with _API_STATS_LOCK:
+        if hit:
+            _API_STATS["cache_hits"] += 1
+        else:
+            _API_STATS["cache_misses"] += 1
+
+
+def api_stats_summary() -> str:
+    """One short --verbose report: totals plus per-endpoint call counts."""
+    with _API_STATS_LOCK:
+        calls = dict(_API_STATS["calls"])
+        hits = _API_STATS["cache_hits"]
+        misses = _API_STATS["cache_misses"]
+    total = sum(calls.values())
+    lines = [
+        f"API usage: {total} call{'s' if total != 1 else ''}, "
+        f"{hits} cache hit{'s' if hits != 1 else ''}, "
+        f"{misses} cache miss{'es' if misses != 1 else ''}"
+    ]
+    for endpoint in sorted(calls):
+        count = calls[endpoint]
+        lines.append(f"  {endpoint}: {count} call{'s' if count != 1 else ''}")
+    return "\n".join(lines)
+
+
 # In-process cache in front of the file cache: within one run, repeated
 # reads of the same key (e.g. repo health for several issues in one repo)
 # never touch disk at all.
@@ -487,13 +537,16 @@ def gh_api(endpoint, params=None):
     if _CACHE_ENABLED:
         cached = _cache_read(key)
         if cached is not None:
+            record_cache_result(True)
             return cached
+        record_cache_result(False)
     cmd = ["gh", "api", endpoint.lstrip("/")]
     for key_param, value in (params or {}).items():
         cmd.extend(["-f", f"{key_param}={value}"])
     attempt = 0
     while True:
         try:
+            record_api_call(endpoint)
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=API_TIMEOUT)
         except FileNotFoundError:
             raise TakenError("the `gh` CLI is not installed or not on PATH") from None

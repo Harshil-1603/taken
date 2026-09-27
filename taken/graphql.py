@@ -156,7 +156,10 @@ def _cached_or_fetch(query, variables, fetcher):
     if checks._CACHE_ENABLED:
         cached = checks._cache_read(key)
         if cached is not None:
+            checks.record_cache_result(True)
             return cached
+        checks.record_cache_result(False)
+    checks.record_api_call("graphql")
     payload = fetcher()
     _raise_for_errors(payload, "issue query")
     data = payload.get("data")

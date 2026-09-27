@@ -239,6 +239,48 @@ def _cache_key(endpoint, params):
     return "|".join(parts)
 
 
+_IDENTITY = None
+_IDENTITY_FETCHED = False
+
+
+def _github_identity():
+    """Return the authenticated `gh` login (lowercased), memoized per process.
+
+    Cache entries are namespaced by identity so that switching identities
+    (`gh auth switch`, or a shared TAKEN_CACHE_DIR on a shared machine)
+    cannot serve one identity's cached data to another. Returns None when
+    the identity cannot be determined; callers fail closed in that case.
+    """
+    global _IDENTITY, _IDENTITY_FETCHED
+    if _IDENTITY_FETCHED:
+        return _IDENTITY
+    _IDENTITY_FETCHED = True
+    try:
+        proc = subprocess.run(
+            ["gh", "api", "user", "--jq", ".login"],
+            capture_output=True,
+            text=True,
+            timeout=API_TIMEOUT,
+        )
+        login = (proc.stdout or "").strip().lower()
+        _IDENTITY = login if proc.returncode == 0 and login else None
+    except Exception:
+        _IDENTITY = None
+    return _IDENTITY
+
+
+def _namespaced_key(key):
+    """Bind a cache key to the authenticated GitHub identity.
+
+    Returns None when the identity is unknown; the cache then behaves as a
+    permanent miss (fail closed) rather than risk cross-identity leakage.
+    """
+    identity = _github_identity()
+    if identity is None:
+        return None
+    return f"github-user:{identity}|{key}"
+
+
 def _mem_get(key):
     with _MEM_LOCK:
         entry = _MEM_CACHE.get(key)
@@ -350,6 +392,9 @@ def clear_cache():
 
 
 def _cache_read(key):
+    key = _namespaced_key(key)
+    if key is None:
+        return None
     cached = _mem_get(key)
     if cached is not None:
         return cached
@@ -365,6 +410,9 @@ def _cache_read(key):
 
 
 def _cache_write(key, data):
+    key = _namespaced_key(key)
+    if key is None:
+        return
     entry = {"fetched_at": time.time(), "data": data}
     _mem_put(key, entry)
     try:

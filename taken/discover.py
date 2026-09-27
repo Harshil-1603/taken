@@ -137,7 +137,10 @@ def _verify_candidate(owner, repo, number, item, min_contributors, me, mode="res
     if (findings["repo_health"].get("contributors") or 0) < min_contributors:
         return None, None
     try:
-        comments = checks.fetch_comments(owner, repo, number)
+        # The verdict above already reflects the verified evidence; this
+        # second fetch only scores maintainer engagement, so a truncated
+        # page cap here is not a verdict risk.
+        comments, _ = checks.fetch_comments(owner, repo, number)
     except checks.TakenError as exc:
         return None, exc  # one bad comments fetch must not abort the run
     engaged = maintainer_engaged(findings["issue"], comments, me=me)

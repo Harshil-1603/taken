@@ -484,10 +484,14 @@ def gh_api(endpoint, params=None):
 def _paged_list(endpoint, params=None):
     """GET every page of a list endpoint, up to MAX_SCAN_PAGES.
 
-    Stops early on a short page. Each page goes through _require_list, so a
-    bad page errors out instead of silently truncating the scan.
+    Returns (items, truncated). truncated is True when the loop fetched a
+    full final page at the page cap, meaning more items may exist that were
+    never scanned. Stops early on a short page. Each page goes through
+    _require_list, so a bad page errors out instead of silently truncating
+    the scan.
     """
     items = []
+    truncated = False
     for page in range(1, MAX_SCAN_PAGES + 1):
         batch = _require_list(
             gh_api(endpoint, {**(params or {}), "per_page": "100", "page": str(page)}),
@@ -496,7 +500,10 @@ def _paged_list(endpoint, params=None):
         items.extend(batch)
         if len(batch) < 100:
             break
-    return items
+        if page == MAX_SCAN_PAGES:
+            # Full page at the cap: the API may hold more items we did not fetch.
+            truncated = True
+    return items, truncated
 
 
 def check_issue(owner, repo, number):
@@ -521,9 +528,13 @@ def check_timeline(owner, repo, number):
 
     These events never appear in the issue comments, which is the main
     reason this tool exists.
+
+    Returns (linked, truncated): truncated is True when the timeline scan
+    hit the page cap with a full final page, so a linked PR beyond the cap
+    may have been missed.
     """
     endpoint = f"repos/{owner}/{repo}/issues/{number}/timeline"
-    events = _paged_list(endpoint)
+    events, truncated = _paged_list(endpoint)
     linked = []
     seen = set()
     for event in events:
@@ -549,7 +560,7 @@ def check_timeline(owner, repo, number):
                 "url": pr.get("html_url"),
             }
         )
-    return linked
+    return linked, truncated
 
 
 def find_claimant_hits(comments, me=None):
@@ -581,14 +592,24 @@ def find_claimant_hits(comments, me=None):
 
 
 def fetch_comments(owner, repo, number):
-    """Fetch raw issue comments (cached like everything else)."""
+    """Fetch raw issue comments (cached like everything else).
+
+    Returns (comments, truncated): truncated is True when the comment scan
+    hit the page cap with a full final page, so comments beyond the cap
+    were never scanned.
+    """
     endpoint = f"repos/{owner}/{repo}/issues/{number}/comments"
     return _paged_list(endpoint)
 
 
 def check_claimants(owner, repo, number, me=None):
-    """Fetch issue comments and scan them for claimant language."""
-    return find_claimant_hits(fetch_comments(owner, repo, number), me=me)
+    """Fetch issue comments and scan them for claimant language.
+
+    Returns (hits, truncated): truncated is True when the comment scan hit
+    the page cap, so a claimant comment beyond the cap may have been missed.
+    """
+    comments, truncated = fetch_comments(owner, repo, number)
+    return find_claimant_hits(comments, me=me), truncated
 
 
 def _first_line_with(text, phrase):
@@ -739,11 +760,19 @@ def check_repo_health(owner, repo, window_days=HEALTH_WINDOW_DAYS):
 def run_checks(owner, repo, number, me=None):
     """Run the full read-only check suite on one issue; return findings."""
     issue = check_issue(owner, repo, number)
+    linked_prs, timeline_truncated = check_timeline(owner, repo, number)
+    claimants, comments_truncated = check_claimants(owner, repo, number, me=me)
     return {
         "target": f"{owner}/{repo}#{number}",
         "issue": issue,
-        "linked_prs": check_timeline(owner, repo, number),
-        "claimants": check_claimants(owner, repo, number, me=me),
+        "linked_prs": linked_prs,
+        "claimants": claimants,
         "ai_policy": check_ai_policy(owner, repo),
         "repo_health": check_repo_health(owner, repo),
+        # Which evidence scans stopped early at the page cap. decide() uses
+        # this to avoid a silent GO on incomplete evidence.
+        "scan_truncated": {
+            "timeline": timeline_truncated,
+            "comments": comments_truncated,
+        },
     }

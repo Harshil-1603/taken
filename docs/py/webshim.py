@@ -254,7 +254,8 @@ def run_discover_web(limit, language, label, min_contributors, me):
         if (findings["repo_health"].get("contributors") or 0) < min_contributors:
             continue
         try:
-            comments = checks.fetch_comments(owner, repo, number)
+            # Truncation here only affects engagement scoring, not the verdict.
+            comments, _ = checks.fetch_comments(owner, repo, number)
         except checks.TakenError:
             comments = []
         engaged = _maintainer_engaged(findings["issue"], comments, me=me)

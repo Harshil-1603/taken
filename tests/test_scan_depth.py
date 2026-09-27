@@ -33,9 +33,10 @@ def test_timeline_finds_pr_on_page_two(monkeypatch):
         }
 
     monkeypatch.setattr(checks, "gh_api", fake)
-    linked = checks.check_timeline("octo", "repo", 1)
+    linked, truncated = checks.check_timeline("octo", "repo", 1)
     assert seen_pages == [1, 2]
     assert [pr["number"] for pr in linked] == [7]
+    assert truncated is False
 
 
 def test_timeline_stops_on_a_short_page(monkeypatch):
@@ -74,8 +75,9 @@ def test_comment_scan_finds_claimant_on_page_two(monkeypatch):
         raise AssertionError("unexpected endpoint " + endpoint)
 
     monkeypatch.setattr(checks, "gh_api", fake)
-    hits = checks.check_claimants("octo", "repo", 1)
+    hits, truncated = checks.check_claimants("octo", "repo", 1)
     assert [hit["author"] for hit in hits] == ["volunteer"]
+    assert truncated is False
 
 
 def test_bad_page_fails_closed(monkeypatch):

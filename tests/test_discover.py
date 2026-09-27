@@ -274,7 +274,7 @@ def test_discover_all_errors_reported_distinctly(monkeypatch, capsys):
         return base(endpoint, params)
 
     monkeypatch.setattr(checks, "gh_api", fake)
-    assert main(["--discover", "--label", "good first issue"]) == 0
+    assert main(["--discover", "--label", "good first issue"]) == 3
     err = capsys.readouterr().err
     assert "no candidates passed verification: all 2 errored" in err
     assert "gh auth status" in err

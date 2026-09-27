@@ -274,11 +274,14 @@ def run_discover(args):
         total = getattr(results, "total", 0)
         if errors and errors == total:
             # Every candidate errored: the tool is broken, not the data.
+            # Exit 3 (hard failure) so scripts and agents do not mistake
+            # this for a healthy empty result.
             print(
                 f"no candidates passed verification: all {total} errored "
                 "(check `gh auth status` and your network connection)",
                 file=sys.stderr,
             )
+            return 3
         elif errors:
             print(
                 f"no candidates passed verification "

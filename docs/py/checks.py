@@ -35,16 +35,33 @@ _CACHE_ENABLED = True
 # cache hits/misses. Recorded in gh_api (REST) and graphql._cached_or_fetch,
 # the two funnels every GitHub request passes through. Guarded by a lock
 # because --discover verifies candidates from a thread pool.
-_API_STATS: dict[str, Any] = {"calls": {}, "cache_hits": 0, "cache_misses": 0}
+#
+# --debug extends this with timing and cost stats: response bytes, retry
+# counts, backoff sleep time, and per-phase timings ("cache", "rest",
+# "graphql"). Only counts, timings, and sizes are recorded: never headers,
+# tokens, or response bodies.
+_API_STATS: dict[str, Any] = {
+    "calls": {},
+    "cache_hits": 0,
+    "cache_misses": 0,
+    "bytes_total": 0,
+    "retries": 0,
+    "backoff_seconds": 0.0,
+    "phases": {},
+}
 _API_STATS_LOCK = threading.Lock()
 
 
 def reset_api_stats() -> None:
-    """Zero the --verbose API usage counters (called once per CLI run)."""
+    """Zero the --verbose/--debug API usage counters (called once per CLI run)."""
     with _API_STATS_LOCK:
         _API_STATS["calls"].clear()
         _API_STATS["cache_hits"] = 0
         _API_STATS["cache_misses"] = 0
+        _API_STATS["bytes_total"] = 0
+        _API_STATS["retries"] = 0
+        _API_STATS["backoff_seconds"] = 0.0
+        _API_STATS["phases"].clear()
 
 
 def record_api_call(endpoint: str) -> None:
@@ -63,6 +80,44 @@ def record_cache_result(hit: bool) -> None:
             _API_STATS["cache_misses"] += 1
 
 
+def record_bytes(count: int) -> None:
+    """Add response body bytes to the --debug total (sizes only, never bodies)."""
+    with _API_STATS_LOCK:
+        _API_STATS["bytes_total"] += max(0, count)
+
+
+def record_retry(backoff_seconds: float) -> None:
+    """Count one backoff retry and accumulate the seconds slept for it."""
+    with _API_STATS_LOCK:
+        _API_STATS["retries"] += 1
+        _API_STATS["backoff_seconds"] += max(0.0, backoff_seconds)
+
+
+def record_phase(name: str, seconds: float) -> None:
+    """Accumulate wall-clock seconds spent in a phase ("cache"/"rest"/"graphql").
+
+    Sums across threads: with --discover's worker pool the total can exceed
+    wall-clock time, which is the point (it measures API time, not elapsed).
+    """
+    with _API_STATS_LOCK:
+        phases = _API_STATS["phases"]
+        phases[name] = phases.get(name, 0.0) + max(0.0, seconds)
+
+
+def api_stats_data() -> dict[str, Any]:
+    """A lock-protected copy of the raw stats for the --debug JSON report."""
+    with _API_STATS_LOCK:
+        return {
+            "calls": dict(_API_STATS["calls"]),
+            "cache_hits": _API_STATS["cache_hits"],
+            "cache_misses": _API_STATS["cache_misses"],
+            "bytes_total": _API_STATS["bytes_total"],
+            "retries": _API_STATS["retries"],
+            "backoff_seconds": _API_STATS["backoff_seconds"],
+            "phases": dict(_API_STATS["phases"]),
+        }
+
+
 def api_stats_summary() -> str:
     """One short --verbose report: totals plus per-endpoint call counts."""
     with _API_STATS_LOCK:
@@ -79,6 +134,70 @@ def api_stats_summary() -> str:
         count = calls[endpoint]
         lines.append(f"  {endpoint}: {count} call{'s' if count != 1 else ''}")
     return "\n".join(lines)
+
+
+def _rate_limit_epoch_to_iso(epoch):
+    try:
+        return datetime.fromtimestamp(int(epoch), tz=timezone.utc).isoformat()
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None
+
+
+def rate_limit_snapshot() -> dict[str, Any] | None:
+    """Best-effort GitHub rate-limit state for the --debug report.
+
+    Runs `gh api rate_limit` outside the response cache (caching would freeze
+    the numbers) but records the call under the "rate_limit" endpoint so the
+    totals stay honest. Never raises: returns None when unavailable.
+    """
+    try:
+        start = time.perf_counter()
+        record_api_call("rate_limit")
+        proc = subprocess.run(
+            ["gh", "api", "rate_limit"], capture_output=True, text=True, timeout=API_TIMEOUT
+        )
+        record_phase("rest", time.perf_counter() - start)
+        if proc.returncode != 0:
+            return None
+        record_bytes(len((proc.stdout or "").encode("utf-8")))
+        resources = (json.loads(proc.stdout or "{}") or {}).get("resources") or {}
+        core = resources.get("core") or {}
+        search = resources.get("search") or {}
+        return {
+            "core_remaining": core.get("remaining"),
+            "core_limit": core.get("limit"),
+            "core_reset": _rate_limit_epoch_to_iso(core.get("reset")),
+            "search_remaining": search.get("remaining"),
+            "search_limit": search.get("limit"),
+            "search_reset": _rate_limit_epoch_to_iso(search.get("reset")),
+        }
+    except Exception:
+        return None
+
+
+def debug_report(
+    total_seconds: float, rate_start: dict[str, Any] | None, rate_end: dict[str, Any] | None
+) -> str:
+    """Machine-readable --debug report: timings, cost, retries, rate limits.
+
+    Safe by construction: only counts, timings, sizes, and rate-limit
+    numbers. No request/response bodies, headers, or tokens ever pass
+    through these counters.
+    """
+    data = api_stats_data()
+    report = {
+        "total_seconds": round(total_seconds, 3),
+        "phases": {name: round(secs, 3) for name, secs in sorted(data["phases"].items())},
+        "api_calls": sum(data["calls"].values()),
+        "cache_hits": data["cache_hits"],
+        "cache_misses": data["cache_misses"],
+        "endpoints": dict(sorted(data["calls"].items())),
+        "bytes_total": data["bytes_total"],
+        "retries": data["retries"],
+        "backoff_seconds": round(data["backoff_seconds"], 3),
+        "rate_limit": {"start": rate_start, "end": rate_end},
+    }
+    return json.dumps(report, indent=2)
 
 
 # In-process cache in front of the file cache: within one run, repeated
@@ -535,7 +654,9 @@ def gh_api(endpoint, params=None):
     """GET a GitHub API endpoint via `gh api` and return parsed JSON."""
     key = _cache_key(endpoint, params)
     if _CACHE_ENABLED:
+        cache_start = time.perf_counter()
         cached = _cache_read(key)
+        record_phase("cache", time.perf_counter() - cache_start)
         if cached is not None:
             record_cache_result(True)
             return cached
@@ -547,7 +668,9 @@ def gh_api(endpoint, params=None):
     while True:
         try:
             record_api_call(endpoint)
+            rest_start = time.perf_counter()
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=API_TIMEOUT)
+            record_phase("rest", time.perf_counter() - rest_start)
         except FileNotFoundError:
             raise TakenError("the `gh` CLI is not installed or not on PATH") from None
         except subprocess.TimeoutExpired:
@@ -568,6 +691,7 @@ def gh_api(endpoint, params=None):
             delay = _retry_after_seconds(err)
             if delay is None:
                 delay = RETRY_BASE_DELAY * (2 ** (attempt - 1)) + random.uniform(0, 0.5)
+            record_retry(delay)
             time.sleep(delay)
             continue
         if _HTTP_404_RE.search(err) or "Not Found" in err:
@@ -577,7 +701,10 @@ def gh_api(endpoint, params=None):
             raise TakenError(f"`gh api {endpoint}` failed: {err[:300]}")
         # Transient 5xx: back off with jitter so parallel discover workers
         # don't retry in lockstep.
-        time.sleep(RETRY_BASE_DELAY * (2 ** (attempt - 1)) + random.uniform(0, 0.5))
+        delay = RETRY_BASE_DELAY * (2 ** (attempt - 1)) + random.uniform(0, 0.5)
+        record_retry(delay)
+        time.sleep(delay)
+    record_bytes(len((proc.stdout or "").encode("utf-8")))
     try:
         data = json.loads(proc.stdout)
     except json.JSONDecodeError:

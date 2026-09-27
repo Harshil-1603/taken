@@ -399,3 +399,20 @@ def test_discover_cli_negative_limit_reports_empty_honestly(monkeypatch, capsys)
     assert main(["--discover", "--label", "good first issue", "--limit", "-1"]) == 0
     err = capsys.readouterr().err
     assert "no candidates passed verification" in err
+
+
+def test_maintainer_engaged_ignores_me_case_insensitively():
+    issue = {"author": "alice"}
+    mine = [comment("RogueAlg0", author_association="MEMBER")]
+    assert discover.maintainer_engaged(issue, mine, me="roguealg0") is False
+    assert discover.maintainer_engaged(issue, mine, me="ROGUEALG0") is False
+    assert discover.maintainer_engaged(issue, mine, me="someone-else") is True
+
+
+def test_discover_me_comment_case_insensitive(monkeypatch, capsys):
+    items = [search_item(1, 1)]
+    fake = make_fake(items, {1: "go"}, {1: [comment("RogueAlg0", author_association="MEMBER")]})
+    monkeypatch.setattr(checks, "gh_api", fake)
+    assert main(["--discover", "--label", "good first issue", "--me", "roguealg0"]) == 0
+    line = capsys.readouterr().out.strip("\n").splitlines()[0]
+    assert "maintainer replied" not in line

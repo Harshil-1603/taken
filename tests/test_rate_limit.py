@@ -156,3 +156,16 @@ def test_non_transient_error_not_retried(monkeypatch):
 
 def test_rate_limit_error_is_a_taken_error():
     assert issubclass(checks.RateLimitError, checks.TakenError)
+
+
+def test_rate_limit_id_containing_404_digits_not_misclassified(monkeypatch):
+    """A rate-limit message citing an ID like 40412 must not become NotFoundError."""
+    calls = []
+    stub_run(
+        monkeypatch,
+        [FakeProc(1, "", "gh: API rate limit exceeded for installation ID 40412. (HTTP 403)")] * 10,
+        calls,
+    )
+    with pytest.raises(checks.RateLimitError, match="rate limit exceeded"):
+        checks.gh_api("repos/octo/repo")
+    assert len(calls) == checks.RETRY_ATTEMPTS

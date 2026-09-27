@@ -99,3 +99,17 @@ def test_not_found_message_names_the_resource(monkeypatch):
     monkeypatch.setattr(checks.subprocess, "run", fake_run)
     with pytest.raises(checks.NotFoundError, match="not found"):
         checks.gh_api("repos/octo/repo/issues/1")
+
+
+def test_404_digits_inside_longer_number_not_treated_as_not_found(monkeypatch):
+    """'404' inside a longer number (e.g. issue 40412) is not a 404 status."""
+    import subprocess
+
+    def fake_run(*args, **kwargs):
+        return subprocess.CompletedProcess(args[0], 1, "", "gh: validation failed for issue 40412")
+
+    monkeypatch.setattr(checks, "_CACHE_ENABLED", False)
+    monkeypatch.setattr(checks.subprocess, "run", fake_run)
+    with pytest.raises(checks.TakenError) as exc:
+        checks.gh_api("repos/octo/repo/issues/1")
+    assert not isinstance(exc.value, checks.NotFoundError)

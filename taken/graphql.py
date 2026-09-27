@@ -491,7 +491,10 @@ def _map_repo_health(repository, window_days=checks.HEALTH_WINDOW_DAYS):
 def _paginate(connection, fetch_next, variables, after_key, max_pages):
     """Follow cursor pagination for one connection, up to max_pages total.
 
-    `fetch_next(new_variables)` must return the next page's connection dict.
+    Returns (nodes, truncated). truncated is True when the connection still
+    reports hasNextPage after the page cap, meaning nodes beyond the cap
+    were never fetched. `fetch_next(new_variables)` must return the next
+    page's connection dict.
     """
     nodes = list(connection.get("nodes", []))
     page_info = connection.get("pageInfo") or {}
@@ -502,7 +505,7 @@ def _paginate(connection, fetch_next, variables, after_key, max_pages):
         nodes.extend(connection.get("nodes", []))
         page_info = connection.get("pageInfo") or {}
         pages += 1
-    return nodes
+    return nodes, bool(page_info.get("hasNextPage"))
 
 
 def run_checks_graphql(owner, repo, number, me=None, mode="graphql", session=None):
@@ -536,8 +539,9 @@ def run_checks_graphql(owner, repo, number, me=None, mode="graphql", session=Non
     # Paginate connections that can exceed the first page (rare).
     comment_nodes = list(issue.pop("_comment_nodes"))
     comment_page = issue.pop("_comment_page")
+    comments_truncated = False
     if comment_page.get("hasNextPage"):
-        comment_nodes = _paginate(
+        comment_nodes, comments_truncated = _paginate(
             {"nodes": comment_nodes, "pageInfo": comment_page},
             lambda v: refetch(v)["issue"]["comments"],
             variables,
@@ -548,8 +552,9 @@ def run_checks_graphql(owner, repo, number, me=None, mode="graphql", session=Non
     issue_node = repository.get("issue") or {}
     timeline_conn = issue_node.get("timelineItems") or {}
     timeline_nodes = list(timeline_conn.get("nodes", []))
+    timeline_truncated = False
     if (timeline_conn.get("pageInfo") or {}).get("hasNextPage"):
-        timeline_nodes = _paginate(
+        timeline_nodes, timeline_truncated = _paginate(
             timeline_conn,
             lambda v: refetch(v)["issue"]["timelineItems"],
             variables,
@@ -560,19 +565,17 @@ def run_checks_graphql(owner, repo, number, me=None, mode="graphql", session=Non
     branch_target = (repository.get("defaultBranchRef") or {}).get("target") or {}
     history = branch_target.get("history") or {}
     if (history.get("pageInfo") or {}).get("hasNextPage"):
-        history = {
-            **history,
-            "nodes": _paginate(
-                history,
-                lambda v: (
-                    ((refetch(v).get("defaultBranchRef") or {}).get("target") or {}).get("history")
-                    or {}
-                ),
-                variables,
-                "historyAfter",
-                _MAX_HISTORY_PAGES,
+        history_nodes, _ = _paginate(
+            history,
+            lambda v: (
+                ((refetch(v).get("defaultBranchRef") or {}).get("target") or {}).get("history")
+                or {}
             ),
-        }
+            variables,
+            "historyAfter",
+            _MAX_HISTORY_PAGES,
+        )
+        history = {**history, "nodes": history_nodes}
         repository = {
             **repository,
             "defaultBranchRef": {
@@ -611,6 +614,11 @@ def run_checks_graphql(owner, repo, number, me=None, mode="graphql", session=Non
         "claimants": checks.find_claimant_hits(_map_comments_to_rest_shape(comment_nodes), me=me),
         "ai_policy": _map_ai_policy(repository),
         "repo_health": _map_repo_health(repository),
+        # Parity with checks.run_checks: which evidence scans stopped early.
+        "scan_truncated": {
+            "timeline": timeline_truncated,
+            "comments": comments_truncated,
+        },
     }
 
 

@@ -59,7 +59,7 @@ def stubbed(monkeypatch):
     monkeypatch.setattr(discover, "_collect_candidates", fake_collect)
     monkeypatch.setattr(graphql, "run_checks_graphql", fake_graphql)
     monkeypatch.setattr(checks, "run_checks", fake_rest)
-    monkeypatch.setattr(checks, "fetch_comments", lambda *args, **kwargs: [])
+    monkeypatch.setattr(checks, "fetch_comments", lambda *args, **kwargs: ([], False))
     return calls
 
 

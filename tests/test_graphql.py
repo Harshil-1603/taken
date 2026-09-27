@@ -333,6 +333,7 @@ def test_findings_shape_matches_rest_contract(monkeypatch):
         "claimants",
         "ai_policy",
         "repo_health",
+        "scan_truncated",
     }
     assert set(findings["issue"]) == {
         "number",

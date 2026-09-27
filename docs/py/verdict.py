@@ -43,6 +43,18 @@ def decide(findings):
     elif policy == "disclosure-required":
         caution_reasons.append("repo requires AI disclosure on contributions")
 
+    # A scan that stopped early at the page cap did not see everything.
+    # Downgrade to CAUTION rather than risk a GO on incomplete evidence.
+    scan_truncated = findings.get("scan_truncated") or {}
+    if scan_truncated.get("timeline"):
+        caution_reasons.append(
+            "timeline scan hit the page cap; a linked PR beyond the cap would be missed"
+        )
+    if scan_truncated.get("comments"):
+        caution_reasons.append(
+            "comment scan hit the page cap; a claimant beyond the cap would be missed"
+        )
+
     health = findings["repo_health"]
     if not health["pushed_recently"] and health["recent_merges"] == 0:
         caution_reasons.append("repo looks stale: no pushes or merges in the last 30 days")

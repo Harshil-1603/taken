@@ -155,6 +155,9 @@ _TRANSIENT_5XX_RE = re.compile(
 )
 _SECONDARY_RATE_LIMIT_RE = re.compile(r"secondary rate limit", re.IGNORECASE)
 _RETRY_AFTER_RE = re.compile(r"retry-?after[:\s]+(\d+)", re.IGNORECASE)
+# A bare "404" substring also matches IDs like 40412; require a word boundary
+# so only a real HTTP 404 status is treated as not-found.
+_HTTP_404_RE = re.compile(r"\b404\b")
 
 
 def _retry_after_seconds(err):
@@ -451,8 +454,8 @@ def gh_api(endpoint, params=None):
         if proc.returncode == 0:
             break
         err = (proc.stderr or "").strip()
-        if "404" in err or "Not Found" in err:
-            raise NotFoundError(f"not found: {endpoint}")
+        # Rate-limit signals first: a throttled response may cite numeric IDs
+        # (e.g. installation 40412) that must not be misread as HTTP 404 below.
         if _is_rate_limited(err):
             attempt += 1
             if attempt >= RETRY_ATTEMPTS:
@@ -466,6 +469,8 @@ def gh_api(endpoint, params=None):
                 delay = RETRY_BASE_DELAY * (2 ** (attempt - 1)) + random.uniform(0, 0.5)
             time.sleep(delay)
             continue
+        if _HTTP_404_RE.search(err) or "Not Found" in err:
+            raise NotFoundError(f"not found: {endpoint}")
         attempt += 1
         if not _TRANSIENT_5XX_RE.search(err) or attempt >= RETRY_ATTEMPTS:
             raise TakenError(f"`gh api {endpoint}` failed: {err[:300]}")

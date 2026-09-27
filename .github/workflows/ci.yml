@@ -70,3 +70,24 @@ jobs:
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
       - name: REUSE lint
         run: uvx reuse lint
+
+  docs-sync:
+    name: Docs pipeline copies in sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check vendored docs copies match taken/
+        run: |
+          fail=0
+          for pair in "taken/checks.py docs/py/checks.py" "taken/verdict.py docs/py/verdict.py"; do
+            set -- $pair
+            if ! diff -q "$1" "$2" > /dev/null; then
+              echo "::error::$2 is out of sync with $1"
+              diff "$1" "$2" | head -20
+              fail=1
+            fi
+          done
+          if [ "$fail" -ne 0 ]; then
+            echo 'Re-copy with: cp taken/checks.py docs/py/checks.py && cp taken/verdict.py docs/py/verdict.py'
+            exit 1
+          fi

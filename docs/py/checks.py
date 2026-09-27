@@ -496,9 +496,9 @@ def gh_api(endpoint, params=None):
         try:
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=API_TIMEOUT)
         except FileNotFoundError:
-            raise TakenError("the `gh` CLI is not installed or not on PATH")
+            raise TakenError("the `gh` CLI is not installed or not on PATH") from None
         except subprocess.TimeoutExpired:
-            raise TakenError(f"`gh api {endpoint}` timed out after {API_TIMEOUT}s")
+            raise TakenError(f"`gh api {endpoint}` timed out after {API_TIMEOUT}s") from None
         if proc.returncode == 0:
             break
         err = (proc.stderr or "").strip()
@@ -528,7 +528,7 @@ def gh_api(endpoint, params=None):
     try:
         data = json.loads(proc.stdout)
     except json.JSONDecodeError:
-        raise TakenError(f"`gh api {endpoint}` did not return JSON")
+        raise TakenError(f"`gh api {endpoint}` did not return JSON") from None
     if _CACHE_ENABLED:
         _cache_write(key, data)
     return data
@@ -698,7 +698,7 @@ def check_ai_policy(owner, repo):
         try:
             raw = base64.b64decode(data.get("content") or "")
         except Exception as exc:
-            raise TakenError(f"could not decode {path}: {exc}")
+            raise TakenError(f"could not decode {path}: {exc}") from exc
         text = raw.decode("utf-8", errors="replace")
         verdict, snippet = classify_policy(text)
         return {"verdict": verdict, "snippet": snippet, "source": path}

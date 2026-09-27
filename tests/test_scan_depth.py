@@ -58,7 +58,7 @@ def test_comment_scan_finds_claimant_on_page_two(monkeypatch):
             if page == 1:
                 return [
                     {
-                        "user": {"login": "user%d" % i},
+                        "user": {"login": f"user{i}"},
                         "body": "nice idea",
                         "created_at": "2026-01-01T00:00:00Z",
                     }

@@ -25,8 +25,9 @@ import subprocess
 import time
 import urllib.parse
 import urllib.request
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Optional
+from typing import Any
 
 from taken import checks
 
@@ -182,9 +183,11 @@ def graphql_via_gh(query, variables):
         try:
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=GRAPHQL_TIMEOUT)
         except FileNotFoundError:
-            raise checks.TakenError("the `gh` CLI is not installed or not on PATH")
+            raise checks.TakenError("the `gh` CLI is not installed or not on PATH") from None
         except subprocess.TimeoutExpired:
-            raise checks.TakenError(f"`gh api graphql` timed out after {GRAPHQL_TIMEOUT}s")
+            raise checks.TakenError(
+                f"`gh api graphql` timed out after {GRAPHQL_TIMEOUT}s"
+            ) from None
         try:
             payload = json.loads(proc.stdout or "{}")
         except json.JSONDecodeError:
@@ -217,7 +220,7 @@ def _gh_auth_token():
         raise checks.TakenError(
             "the `gh` CLI is not installed or not on PATH; "
             "the persistent session needs `gh auth token`"
-        )
+        ) from None
     token = (proc.stdout or "").strip()
     if proc.returncode != 0 or not token:
         raise checks.TakenError(
@@ -239,10 +242,10 @@ class PersistentGraphQLSession:
     written to disk. Only the response bodies go through the cache.
     """
 
-    def __init__(self, token_provider: Optional[Callable[[], str]] = None):
+    def __init__(self, token_provider: Callable[[], str] | None = None):
         self._token_provider = token_provider or _gh_auth_token
-        self._token: Optional[str] = None
-        self._conn: Optional[http.client.HTTPSConnection] = None
+        self._token: str | None = None
+        self._conn: http.client.HTTPSConnection | None = None
         self.calls = 0  # introspection hook for tests/smoke runs
 
     def _ensure(self):
@@ -322,7 +325,7 @@ class PersistentGraphQLSession:
         try:
             return json.loads(raw.decode("utf-8"))
         except json.JSONDecodeError:
-            raise checks.TakenError("persistent GraphQL response was not JSON")
+            raise checks.TakenError("persistent GraphQL response was not JSON") from None
 
     def query(self, query, variables):
         """POST with the same retry discipline as the subprocess path."""
@@ -349,7 +352,7 @@ class PersistentGraphQLSession:
         self._drop()
 
 
-_SESSION: Optional[PersistentGraphQLSession] = None
+_SESSION: PersistentGraphQLSession | None = None
 
 
 def get_session():

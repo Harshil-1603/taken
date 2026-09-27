@@ -242,6 +242,10 @@ def discover(
     friendly_labels (first-time-contributor labels on the issue),
     welcoming (repo-level signs contributions are welcome).
     """
+    # A negative limit is meaningless; clamp to 0 (empty result) instead of
+    # letting ranked[:limit] silently drop the top candidates. This also
+    # covers the MCP discover_candidates path, which bypasses argparse.
+    limit = max(0, limit)
     updated_after = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%d")
     labels = [label] if label else SEARCH_LABELS
     candidates, searched = _collect_candidates(labels, language, updated_after)

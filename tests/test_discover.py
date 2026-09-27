@@ -382,3 +382,20 @@ def test_discover_progress_callback(faked):
 def test_discover_jobs_flag_rejected_when_zero(faked, capsys):
     assert main(["--discover", "--label", "good first issue", "--jobs", "0"]) == 3
     assert "--jobs must be at least 1" in capsys.readouterr().err
+
+
+def test_discover_negative_limit_yields_empty_not_truncated(monkeypatch):
+    """A negative limit must not slice off the top candidate (ranked[:-1])."""
+    items = [search_item(1, 1), search_item(2, 2)]
+    monkeypatch.setattr(checks, "gh_api", make_fake(items, {1: "go", 2: "go"}, {}))
+    results = discover.discover(label="good first issue", limit=-1, jobs=1)
+    assert results == []
+    assert results.total == 2
+
+
+def test_discover_cli_negative_limit_reports_empty_honestly(monkeypatch, capsys):
+    items = [search_item(1, 1), search_item(2, 2)]
+    monkeypatch.setattr(checks, "gh_api", make_fake(items, {1: "go", 2: "go"}, {}))
+    assert main(["--discover", "--label", "good first issue", "--limit", "-1"]) == 0
+    err = capsys.readouterr().err
+    assert "no candidates passed verification" in err

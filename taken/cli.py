@@ -4,6 +4,7 @@ import argparse
 import json
 import re
 import sys
+import time
 
 from taken import __version__, checks, discover, graphql
 from taken.verdict import CAUTION, GO, TAKEN, decide
@@ -101,6 +102,14 @@ def build_parser():
         action="store_true",
         help="print an API usage summary (calls per endpoint, cache hits/misses) "
         "to stderr at the end of the run",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="print a machine-readable JSON debug report (wall-clock timings "
+        "per phase, rate-limit state before/after, retries, backoff time, "
+        "API usage) to stderr at the end of the run; implies --verbose. "
+        "Only counts, timings, and sizes: never tokens or response bodies.",
     )
     parser.add_argument(
         "--me",
@@ -214,27 +223,35 @@ def main(argv=None):
     if args.discover:
         if args.targets or args.file:
             parser.error("--discover takes no targets")
-        return _run_with_stats(run_discover, args, verbose=args.verbose)
+        return _run_with_stats(run_discover, args, verbose=args.verbose, debug=args.debug)
     if not targets:
         parser.error("need at least one target, --file, or --discover")
     if len(targets) == 1:
-        return _run_with_stats(run_single, targets[0], args, verbose=args.verbose)
-    return _run_with_stats(run_batch, targets, args, verbose=args.verbose)
+        return _run_with_stats(run_single, targets[0], args, verbose=args.verbose, debug=args.debug)
+    return _run_with_stats(run_batch, targets, args, verbose=args.verbose, debug=args.debug)
 
 
-def _run_with_stats(func, *fargs, verbose=False):
-    """Run a CLI command, printing the --verbose API usage summary to stderr.
+def _run_with_stats(func, *fargs, verbose=False, debug=False):
+    """Run a CLI command, printing stats to stderr at the end of the run.
 
-    The summary goes to stderr so --json stdout stays clean for piping. It
-    prints even when the run fails (exit 3), which is exactly when the
-    numbers matter most.
+    --verbose prints the human API usage summary; --debug implies it and
+    adds a machine-readable JSON report (timings per phase, rate-limit
+    state before/after, retries, backoff time). Both go to stderr so
+    --json stdout stays clean for piping, and both print even when the
+    run fails (exit 3), which is exactly when the numbers matter most.
     """
     checks.reset_api_stats()
+    rate_start = checks.rate_limit_snapshot() if debug else None
+    start = time.perf_counter()
     try:
         return func(*fargs)
     finally:
-        if verbose:
+        total = time.perf_counter() - start
+        rate_end = checks.rate_limit_snapshot() if debug else None
+        if verbose or debug:
             print(checks.api_stats_summary(), file=sys.stderr)
+        if debug:
+            print(checks.debug_report(total, rate_start, rate_end), file=sys.stderr)
 
 
 def format_discover_line(result):

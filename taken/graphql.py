@@ -154,7 +154,9 @@ def _cache_key_for(query, variables):
 def _cached_or_fetch(query, variables, fetcher):
     key = _cache_key_for(query, variables)
     if checks._CACHE_ENABLED:
+        cache_start = time.perf_counter()
         cached = checks._cache_read(key)
+        checks.record_phase("cache", time.perf_counter() - cache_start)
         if cached is not None:
             checks.record_cache_result(True)
             return cached
@@ -184,13 +186,16 @@ def graphql_via_gh(query, variables):
 
     def attempt_once():
         try:
+            gql_start = time.perf_counter()
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=GRAPHQL_TIMEOUT)
+            checks.record_phase("graphql", time.perf_counter() - gql_start)
         except FileNotFoundError:
             raise checks.TakenError("the `gh` CLI is not installed or not on PATH") from None
         except subprocess.TimeoutExpired:
             raise checks.TakenError(
                 f"`gh api graphql` timed out after {GRAPHQL_TIMEOUT}s"
             ) from None
+        checks.record_bytes(len((proc.stdout or "").encode("utf-8")))
         try:
             payload = json.loads(proc.stdout or "{}")
         except json.JSONDecodeError:
@@ -212,7 +217,9 @@ def graphql_via_gh(query, variables):
             attempt += 1
             if attempt >= checks.RETRY_ATTEMPTS:
                 raise
-            time.sleep(checks.RETRY_BASE_DELAY * (2 ** (attempt - 1)) + random.uniform(0, 0.5))
+            delay = checks.RETRY_BASE_DELAY * (2 ** (attempt - 1)) + random.uniform(0, 0.5)
+            checks.record_retry(delay)
+            time.sleep(delay)
 
 
 def _gh_auth_token():
@@ -310,6 +317,7 @@ class PersistentGraphQLSession:
             "User-Agent": "taken-graphql-persistent",
         }
         self.calls += 1
+        gql_start = time.perf_counter()
         try:
             self._conn.request("POST", "/graphql", body=body, headers=headers)
             resp = self._conn.getresponse()
@@ -318,6 +326,9 @@ class PersistentGraphQLSession:
             # Proxies and servers close idle keep-alive connections; the
             # caller reconnects and retries once.
             raise _ConnectionLost(f"persistent GraphQL connection dropped: {exc}") from exc
+        finally:
+            checks.record_phase("graphql", time.perf_counter() - gql_start)
+        checks.record_bytes(len(raw or b""))
         if resp.status == 429:
             raise checks.RateLimitError(
                 "GitHub GraphQL rate limit hit (HTTP 429 on persistent session). "
@@ -342,7 +353,9 @@ class PersistentGraphQLSession:
                 attempt += 1
                 if attempt >= checks.RETRY_ATTEMPTS:
                     raise
-                time.sleep(checks.RETRY_BASE_DELAY * (2 ** (attempt - 1)) + random.uniform(0, 0.5))
+                delay = checks.RETRY_BASE_DELAY * (2 ** (attempt - 1)) + random.uniform(0, 0.5)
+                checks.record_retry(delay)
+                time.sleep(delay)
 
     def _checked_post(self, query, variables):
         payload = self.post(query, variables)

@@ -68,9 +68,15 @@ def maintainer_engaged(issue, comments, me=None):
     neither does your own login (see --me).
     """
     author = issue.get("author")
+    me_lower = (me or "").lower()
     for comment in comments:
         login = (comment.get("user") or {}).get("login") or ""
-        if not login or login == author or login == me or login.endswith("[bot]"):
+        if not login or login == author or login.endswith("[bot]"):
+            continue
+        # GitHub logins are case-insensitive: "RogueAlg0" is me even when
+        # --me was passed as "roguealg0". Matches the claimant-scan
+        # convention in checks.py.
+        if me_lower and login.lower() == me_lower:
             continue
         if comment.get("author_association") in MAINTAINER_ASSOCIATIONS:
             return True

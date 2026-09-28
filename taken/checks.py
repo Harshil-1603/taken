@@ -1000,14 +1000,15 @@ def run_checks(owner, repo, number, me=None):
     and the timeline settles issues with an open linked PR, so the expensive
     comment, policy, and health scans only run while the verdict is still
     open. Stages after the stop point keep neutral placeholders so the
-    findings shape never changes.
+    findings shape never changes, and "stages_skipped" names them so
+    format_human() reports skipped stages as not checked, never as
+    observed facts.
 
-    Stopping early cannot change the verdict versus the old fixed order:
-    decide() itself is the stop condition, evaluated after each stage, and
-    the stages after the last check (claimants, policy, health) can only
-    append CAUTION reasons, never overturn a TAKEN. Every TAKEN-capable
-    signal (issue state/assignees, then linked PRs) is fully fetched before
-    its decide() check runs (issue #125).
+    The early stop is sound because decide() itself is the stop condition,
+    evaluated after each stage: the stages after the last check (claimants,
+    policy, health) can only append CAUTION reasons, never overturn a
+    TAKEN. Every TAKEN-capable signal (issue state/assignees, then linked
+    PRs) is fully fetched before its decide() check runs (issue #125).
     """
     issue = check_issue(owner, repo, number)
     findings = {
@@ -1017,6 +1018,8 @@ def run_checks(owner, repo, number, me=None):
         "claimants": [],
         # Neutral placeholders for stages not yet fetched: decide() reads
         # "not-checked" / a skipped-healthy repo as no signal either way.
+        # recent_merges is 0 (not 1) so welcoming_signals() stays silent;
+        # pushed_recently=True keeps decide() neutral on its own.
         "ai_policy": {
             "verdict": "not-checked",
             "snippet": "",
@@ -1025,7 +1028,7 @@ def run_checks(owner, repo, number, me=None):
         "repo_health": {
             "pushed_at": None,
             "pushed_recently": True,
-            "recent_merges": 1,
+            "recent_merges": 0,
             "contributors": 0,
             "contributors_window_days": CONTRIBUTORS_WINDOW_DAYS,
             "skipped": True,
@@ -1036,12 +1039,17 @@ def run_checks(owner, repo, number, me=None):
             "timeline": False,
             "comments": False,
         },
+        # Stages never fetched because decide() already reported TAKEN.
+        # format_human() renders these as "not checked" so a skipped stage
+        # is never presented as an observed fact.
+        "stages_skipped": ["timeline", "claimants", "ai_policy", "repo_health"],
     }
     if decide(findings)[0] == TAKEN:
         return findings
     linked_prs, timeline_truncated = check_timeline(owner, repo, number)
     findings["linked_prs"] = linked_prs
     findings["scan_truncated"]["timeline"] = timeline_truncated
+    findings["stages_skipped"] = ["claimants", "ai_policy", "repo_health"]
     if decide(findings)[0] == TAKEN:
         return findings
     claimants, comments_truncated = check_claimants(owner, repo, number, me=me)
@@ -1049,4 +1057,5 @@ def run_checks(owner, repo, number, me=None):
     findings["scan_truncated"]["comments"] = comments_truncated
     findings["ai_policy"] = check_ai_policy(owner, repo)
     findings["repo_health"] = check_repo_health(owner, repo)
+    findings["stages_skipped"] = []
     return findings

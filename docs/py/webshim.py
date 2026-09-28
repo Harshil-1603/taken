@@ -81,6 +81,10 @@ def format_human(findings, verdict, reasons):
     issue = findings["issue"]
     health = findings["repo_health"]
     policy = findings["ai_policy"]
+    # Stages skipped by the cheapest-decisive-first early stop (#125) are
+    # reported as not checked, never as observed facts.
+    skipped = set(findings.get("stages_skipped") or [])
+    not_checked = "not checked (verdict already decided)"
     lines = [
         f"taken? {findings['target']}",
         f"verdict: {verdict}",
@@ -88,7 +92,9 @@ def format_human(findings, verdict, reasons):
         f'  issue: {issue["state"]}, "{issue["title"]}"',
         f"         {issue['url']} ({issue['comment_count']} comments)",
     ]
-    if findings["linked_prs"]:
+    if "timeline" in skipped:
+        lines.append(f"  linked PRs: {not_checked}")
+    elif findings["linked_prs"]:
         for pr in findings["linked_prs"]:
             if pr["state"] == "open":
                 status = "open"
@@ -104,7 +110,9 @@ def format_human(findings, verdict, reasons):
         lines.append(f"  assignees: {', '.join(issue['assignees'])}")
     else:
         lines.append("  assignees: none")
-    if findings["claimants"]:
+    if "claimants" in skipped:
+        lines.append(f"  claimants: {not_checked}")
+    elif findings["claimants"]:
         for hit in findings["claimants"]:
             lines.append(
                 f'  claimant: {hit["author"]} on {hit["date"]} (matched "{hit["pattern"]}")'
@@ -112,17 +120,22 @@ def format_human(findings, verdict, reasons):
             lines.append(f'            "{hit["snippet"]}"')
     else:
         lines.append("  claimants: none found in comments")
-    if policy["source"]:
+    if "ai_policy" in skipped:
+        lines.append(f"  AI policy: {not_checked}")
+    elif policy["source"]:
         lines.append(f"  AI policy: {policy['verdict']} ({policy['source']})")
         if policy["snippet"]:
             lines.append(f'             "{policy["snippet"]}"')
     else:
         lines.append("  AI policy: none found (no CONTRIBUTING file)")
-    lines.append(
-        f"  repo health: pushed {health['pushed_at'] or 'unknown'}, "
-        f"{health['recent_merges']} PRs merged in last 30 days, "
-        f"{health['contributors']} contributors in last 90 days"
-    )
+    if "repo_health" in skipped:
+        lines.append(f"  repo health: {not_checked}")
+    else:
+        lines.append(
+            f"  repo health: pushed {health['pushed_at'] or 'unknown'}, "
+            f"{health['recent_merges']} PRs merged in last 30 days, "
+            f"{health['contributors']} contributors in last 90 days"
+        )
     friendly = checks.friendly_labels(findings)
     if friendly:
         lines.append(f"  first-time friendly: {', '.join(friendly)}")

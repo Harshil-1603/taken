@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from taken import checks
+from taken.cli import format_human
 from taken.verdict import CAUTION, GO, TAKEN, decide
 
 
@@ -120,6 +121,12 @@ def test_closed_issue_stops_after_issue_call(monkeypatch):
     assert findings["linked_prs"] == []
     assert findings["ai_policy"]["verdict"] == "not-checked"
     assert findings["repo_health"]["skipped"] is True
+    assert findings["stages_skipped"] == [
+        "timeline",
+        "claimants",
+        "ai_policy",
+        "repo_health",
+    ]
 
 
 def test_assigned_issue_stops_after_issue_call(monkeypatch):
@@ -141,6 +148,7 @@ def test_open_linked_pr_stops_after_timeline(monkeypatch):
     assert not any("/contents/" in c for c in fake.calls)
     assert decide(findings)[0] == TAKEN
     assert findings["linked_prs"][0]["number"] == 7
+    assert findings["stages_skipped"] == ["claimants", "ai_policy", "repo_health"]
 
 
 def test_no_signals_fetches_everything_in_order(monkeypatch):
@@ -154,6 +162,7 @@ def test_no_signals_fetches_everything_in_order(monkeypatch):
     assert fake.calls[2] == "repos/octo/repo/issues/1/comments"
     assert findings["ai_policy"]["verdict"] == "none-found"
     assert "skipped" not in findings["repo_health"]
+    assert findings["stages_skipped"] == []
 
 
 def test_stale_repo_still_fetches_health(monkeypatch):
@@ -201,3 +210,53 @@ def test_verdict_matches_fixed_order(monkeypatch, kwargs):
         else:
             old_verdict = verdict
     assert new_verdict == old_verdict
+
+
+NOT_CHECKED = "not checked (verdict already decided)"
+
+
+def test_human_output_marks_all_stages_not_checked_on_stage1_stop(monkeypatch):
+    """Skipped stages are never presented as observed facts."""
+    fake = make_fake(state="closed")
+    monkeypatch.setattr(checks, "gh_api", fake)
+    findings = checks.run_checks("octo", "repo", 1)
+    verdict, reasons = decide(findings)
+    out = format_human(findings, verdict, reasons)
+    assert f"linked PRs: {NOT_CHECKED}" in out
+    assert f"claimants: {NOT_CHECKED}" in out
+    assert f"AI policy: {NOT_CHECKED}" in out
+    assert f"repo health: {NOT_CHECKED}" in out
+    # The old dishonest lines must be gone.
+    assert "none found in timeline" not in out
+    assert "none found in comments" not in out
+    assert "no CONTRIBUTING file" not in out
+    assert "PRs merged in last 30 days" not in out
+    assert "welcoming:" not in out
+
+
+def test_human_output_marks_claimants_not_checked_on_stage2_stop(monkeypatch):
+    fake = make_fake(
+        timeline_events=[cross_ref(7)],
+        prs={"7": pr_payload(7, state="open")},
+    )
+    monkeypatch.setattr(checks, "gh_api", fake)
+    findings = checks.run_checks("octo", "repo", 1)
+    verdict, reasons = decide(findings)
+    out = format_human(findings, verdict, reasons)
+    # Timeline ran: the linked PR is shown.
+    assert 'linked PR: #7 "PR 7" (open)' in out
+    # Claimants, policy, health did not.
+    assert f"claimants: {NOT_CHECKED}" in out
+    assert f"AI policy: {NOT_CHECKED}" in out
+    assert f"repo health: {NOT_CHECKED}" in out
+
+
+def test_human_output_unchanged_on_full_run(monkeypatch):
+    fake = make_fake()
+    monkeypatch.setattr(checks, "gh_api", fake)
+    findings = checks.run_checks("octo", "repo", 1)
+    verdict, reasons = decide(findings)
+    out = format_human(findings, verdict, reasons)
+    assert NOT_CHECKED not in out
+    assert "claimants: none found in comments" in out
+    assert "repo health: pushed" in out

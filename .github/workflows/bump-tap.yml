@@ -10,6 +10,11 @@ permissions:
 # After a release tag is pushed and the sdist is live on PyPI, bump the
 # Homebrew tap formula and open a PR in RogueAlg0/homebrew-taken-tap.
 #
+# The bump refreshes the sdist url/sha256 AND regenerates the vendored
+# dependency resources via .github/scripts/resolve_tap_resources.py, because
+# Homebrew's virtualenv_install_with_resources installs each resource with
+# pip --no-deps.
+#
 # Needs a TAP_BUMP_PAT secret: fine-grained PAT with Contents and
 # Pull requests write access on the tap repo. Without it the job skips
 # with a warning instead of failing.
@@ -60,6 +65,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: steps.pat.outputs.present == 'true'
         with:
+          persist-credentials: false
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.pat.outputs.present == 'true'
+        with:
           repository: RogueAlg0/homebrew-taken-tap
           token: ${{ secrets.TAP_BUMP_PAT }}
           path: tap
@@ -79,27 +89,11 @@ jobs:
             exit 0
           fi
           git checkout -b "${BRANCH}"
-          python3 - "$URL" "$SHA" "$VER" <<'EOF'
-          import re, sys
-          url, sha, ver = sys.argv[1], sys.argv[2], sys.argv[3]
-          path = "Formula/taken.rb"
-          lines = open(path).read().splitlines(keepends=True)
-          out = []
-          replaced_url = replaced_sha = False
-          for line in lines:
-              if (not replaced_url) and re.match(r'^  url ".*taken_gh-.*"$', line.rstrip("\n")):
-                  out.append(f'  url "{url}"\n')
-                  replaced_url = True
-              elif replaced_url and (not replaced_sha) and line.startswith('  sha256 "'):
-                  out.append(f'  sha256 "{sha}"\n')
-                  replaced_sha = True
-              else:
-                  out.append(re.sub(r'assert_match "taken [^"]+"', f'assert_match "taken {ver}"', line))
-          if not (replaced_url and replaced_sha):
-              sys.exit("formula url/sha256 lines not found")
-          open(path, "w").write("".join(out))
-          print(f"Formula/taken.rb bumped to {ver}")
-          EOF
+          python3 -m pip install --quiet --break-system-packages packaging
+          python3 "${GITHUB_WORKSPACE}/.github/scripts/resolve_tap_resources.py" \
+            "${VER}" /tmp/tap-resources.json
+          python3 "${GITHUB_WORKSPACE}/.github/scripts/rewrite_tap_formula.py" \
+            "Formula/taken.rb" /tmp/tap-resources.json "${URL}" "${SHA}" "${VER}"
           git add Formula/taken.rb
           git -c user.name="github-actions[bot]" \
               -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
@@ -108,4 +102,4 @@ jobs:
           gh pr create --repo RogueAlg0/homebrew-taken-tap \
             --base main --head "${BRANCH}" \
             --title "Bump taken to ${VER}" \
-            --body "Automated formula bump for the v${VER} release: sdist URL and sha256 synced from PyPI."
+            --body "Automated formula bump for the v${VER} release: sdist URL and sha256 synced from PyPI, and the vendored dependency resources regenerated with .github/scripts/resolve_tap_resources.py (extras-aware closure, pinned sdist URLs and sha256)."

@@ -18,6 +18,8 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from taken.verdict import TAKEN, decide
+
 API_TIMEOUT = 60
 HEALTH_WINDOW_DAYS = 30
 CONTRIBUTORS_WINDOW_DAYS = 90
@@ -991,21 +993,60 @@ def check_repo_health(owner, repo, window_days=HEALTH_WINDOW_DAYS):
 
 
 def run_checks(owner, repo, number, me=None):
-    """Run the full read-only check suite on one issue; return findings."""
+    """Run the full read-only check suite on one issue; return findings.
+
+    Fetches run cheapest-decisive-first and stop early as soon as decide()
+    reports TAKEN: the issue call alone settles closed and assigned issues,
+    and the timeline settles issues with an open linked PR, so the expensive
+    comment, policy, and health scans only run while the verdict is still
+    open. Stages after the stop point keep neutral placeholders so the
+    findings shape never changes.
+
+    Stopping early cannot change the verdict versus the old fixed order:
+    decide() itself is the stop condition, evaluated after each stage, and
+    the stages after the last check (claimants, policy, health) can only
+    append CAUTION reasons, never overturn a TAKEN. Every TAKEN-capable
+    signal (issue state/assignees, then linked PRs) is fully fetched before
+    its decide() check runs (issue #125).
+    """
     issue = check_issue(owner, repo, number)
-    linked_prs, timeline_truncated = check_timeline(owner, repo, number)
-    claimants, comments_truncated = check_claimants(owner, repo, number, me=me)
-    return {
+    findings = {
         "target": f"{owner}/{repo}#{number}",
         "issue": issue,
-        "linked_prs": linked_prs,
-        "claimants": claimants,
-        "ai_policy": check_ai_policy(owner, repo),
-        "repo_health": check_repo_health(owner, repo),
+        "linked_prs": [],
+        "claimants": [],
+        # Neutral placeholders for stages not yet fetched: decide() reads
+        # "not-checked" / a skipped-healthy repo as no signal either way.
+        "ai_policy": {
+            "verdict": "not-checked",
+            "snippet": "",
+            "source": None,
+        },
+        "repo_health": {
+            "pushed_at": None,
+            "pushed_recently": True,
+            "recent_merges": 1,
+            "contributors": 0,
+            "contributors_window_days": CONTRIBUTORS_WINDOW_DAYS,
+            "skipped": True,
+        },
         # Which evidence scans stopped early at the page cap. decide() uses
         # this to avoid a silent GO on incomplete evidence.
         "scan_truncated": {
-            "timeline": timeline_truncated,
-            "comments": comments_truncated,
+            "timeline": False,
+            "comments": False,
         },
     }
+    if decide(findings)[0] == TAKEN:
+        return findings
+    linked_prs, timeline_truncated = check_timeline(owner, repo, number)
+    findings["linked_prs"] = linked_prs
+    findings["scan_truncated"]["timeline"] = timeline_truncated
+    if decide(findings)[0] == TAKEN:
+        return findings
+    claimants, comments_truncated = check_claimants(owner, repo, number, me=me)
+    findings["claimants"] = claimants
+    findings["scan_truncated"]["comments"] = comments_truncated
+    findings["ai_policy"] = check_ai_policy(owner, repo)
+    findings["repo_health"] = check_repo_health(owner, repo)
+    return findings

@@ -8,7 +8,7 @@ Older releases may not receive fixes; please upgrade before reporting.
 ## Reporting a vulnerability
 
 Please do not open a public issue for security vulnerabilities. Use
-GitHub's [private vulnerability reporting](../../security/advisories/new)
+GitHub's [private vulnerability reporting](https://github.com/RogueAlg0/taken/security/advisories/new)
 for this repository instead.
 
 Reports are usually acknowledged within 7 days. If the report is

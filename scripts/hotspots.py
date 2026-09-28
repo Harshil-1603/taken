@@ -50,15 +50,35 @@ def main() -> int:
         return 2
     del radon
 
-    files = run("git", "ls-files", f"{PACKAGE_DIR}/*.py").split()
+    # List the package directory and filter in Python: recursive by
+    # construction, so a future subpackage cannot silently drop out of the
+    # metric the way a non-recursive "taken/*.py" glob would allow.
+    files = [f for f in run("git", "ls-files", PACKAGE_DIR).split() if f.endswith(".py")]
     if not files:
         print("hotspots: no tracked files found", file=sys.stderr)
         return 2
 
     cc_raw = json.loads(run("radon", "cc", "-s", "-j", *files))
+    # Radon omits files with no complexity blocks from its output, so a
+    # missing key legitimately means cc=0. But any key we did not ask about
+    # means radon's path reporting drifted (absolute paths, normalization),
+    # which would silently zero every file's complexity: fail loud instead.
+    unexpected = set(cc_raw) - set(files)
+    if unexpected:
+        print(
+            f"hotspots: radon returned paths not in the file list: {sorted(unexpected)}",
+            file=sys.stderr,
+        )
+        return 2
+
     rows = []
     for path in sorted(files):
         cc_sum = sum(block["complexity"] for block in cc_raw.get(path, []))
+        # Default history simplification excludes merge commits from the
+        # count. That is intentional: each PR's commits are already counted
+        # through the merge's parents, so counting the merge itself would
+        # double-count the same changes. Blind spot: edits made only inside a
+        # merge commit (conflict resolution) are invisible to this metric.
         commits = len(run("git", "log", "--follow", "--format=%H", "--", path).split())
         rows.append(
             {

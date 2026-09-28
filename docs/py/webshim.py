@@ -17,15 +17,35 @@ Notes for maintainers:
   each). Scoring logic is the same (maintainer replied +3, updated in
   last 7 days +2, repo pushed in last 7 days +1).
 - The file cache is disabled; there is no persistent disk in the page.
+- checks.py is a byte-copy of taken/checks.py, so it does
+  `from taken.verdict import ...`. There is no taken package in the
+  browser; this module synthesizes one (below) whose path is this
+  directory, so taken.verdict resolves to the vendored verdict.py.
 """
 
+import importlib
 import json
+import os
 import re
+import sys
+import types
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
-import checks
-from verdict import GO, decide
+# checks.py is a byte-copy of taken/checks.py, so it does
+# `from taken.verdict import ...`, but there is no taken package in the
+# Pyodide filesystem (only these flat vendored files). Synthesize a taken
+# package pointing at this directory before loading checks, so taken.verdict
+# resolves to the vendored verdict.py. importlib is used instead of plain
+# imports because the loading must happen after this block (ruff E402).
+_taken_pkg = types.ModuleType("taken")
+_taken_pkg.__path__ = [os.path.dirname(os.path.abspath(__file__))]
+sys.modules["taken"] = _taken_pkg
+
+checks = importlib.import_module("checks")
+_verdict = importlib.import_module("taken.verdict")
+GO = _verdict.GO
+decide = _verdict.decide
 
 URL_RE = re.compile(r"^https?://github\.com/([^/\s]+)/([^/\s]+)/issues/(\d+)/?$")
 SHORT_RE = re.compile(r"^([^/\s#]+)/([^/\s#]+)#(\d+)$")

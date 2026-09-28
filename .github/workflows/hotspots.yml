@@ -9,6 +9,8 @@ name: Hotspot badge refresh
 # GITHUB_TOKEN: merges attributed to GITHUB_TOKEN do not trigger new workflow
 # runs, which left main's HEAD with no CI signal (#88).
 
+permissions: {}
+
 on:
   push:
     branches: [main]

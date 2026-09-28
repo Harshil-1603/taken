@@ -1,5 +1,7 @@
 name: SonarQube
 
+permissions: {}
+
 on:
   push:
     branches: [main]

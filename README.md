@@ -248,3 +248,9 @@ To regenerate the badge data locally:
 
 This project is built with AI assistance, and says so openly. Every
 contribution is reviewed and understood by its author before it lands.
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for the supported versions and how to report
+a vulnerability. Please use private vulnerability reporting, not a public
+issue.

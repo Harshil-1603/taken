@@ -18,6 +18,13 @@
 `taken?` answers one question before you volunteer for a GitHub issue: is it
 already taken?
 
+In plain terms, it checks an issue before you start work: is it still open to
+contributions, is anyone already on it, and is the repo responsive enough that
+your PR will get reviewed.
+
+Try it without installing anything: the [live console](https://roguealg0.github.io/taken/)
+runs the real checks in your browser.
+
 The catch it was built for: GitHub shows "linked a pull request" events in the
 issue timeline, but never in the comments. You can read every comment on an
 issue and still miss that someone already opened a PR for it. `taken?` checks

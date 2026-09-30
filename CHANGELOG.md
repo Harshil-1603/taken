@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- README now states what taken is for (in plain terms) before how it works,
+  and links the live in-browser console.
+- CI now fails if the `taken --version` string in `docs/py/webshim.py`
+  drifts from the package version in `pyproject.toml`.
+
+### Added
 - Contributor onboarding: expanded CONTRIBUTING.md with setup, workflow,
   and local checks; new bug-report and feature-request issue templates;
   PR template gains a short "Verification" section.

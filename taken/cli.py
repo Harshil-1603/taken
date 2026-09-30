@@ -39,8 +39,7 @@ def parse_target(text):
 def _parse_error(text):
     """Print the standard unparseable-target error; return exit code 3."""
     print(
-        f"error: could not parse {text!r}; "
-        "use owner/repo#123, an issue URL, or owner/repo to scan",
+        f"error: could not parse {text!r}; use owner/repo#123, an issue URL, or owner/repo to scan",
         file=sys.stderr,
     )
     return 3

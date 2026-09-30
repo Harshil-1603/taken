@@ -23,6 +23,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   the invariants contributors must not break.
 
 ### Fixed
+- Web console discover no longer aborts on the first failed label search: it
+  now mirrors the engine's #162 partial-results behavior, keeping candidates
+  from the labels that succeeded, reporting which label searches failed in
+  the output, and erroring only when every label search fails.
 - REST `gh api` calls now pin `--method GET`: stock `gh` switches to POST
   whenever `-f` parameters are added, which broke every parameterized read
   for PyPI/Homebrew users on a real `gh` CLI. The GraphQL invocation keeps

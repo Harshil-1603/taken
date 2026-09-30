@@ -253,6 +253,8 @@ def run_discover_web(limit, language, label, min_contributors, me):
     updated_after = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%d")
     labels = [label] if label else WEB_DISCOVER_LABELS
     candidates, seen = [], set()
+    search_errors = []
+    searched = 0
     for lab in labels:
         query = f'is:open is:issue no:assignee label:"{lab}" updated:>={updated_after}'
         if language:
@@ -260,7 +262,14 @@ def run_discover_web(limit, language, label, min_contributors, me):
         try:
             items = checks.search_issues(query, per_page=WEB_DISCOVER_PER_LABEL)
         except checks.TakenError as exc:
-            return f"error: live discover failed: {exc}"
+            # Record and continue: one failed label search must not abandon
+            # the candidates already gathered (mirrors the engine's #162
+            # partial-results fallback in taken/discover.py). On the
+            # 60 req/hr visitor budget a rate-limited search is the expected
+            # failure mode, not a corner case.
+            search_errors.append((lab, str(exc)))
+            continue
+        searched += 1
         for item in items:
             url = (item.get("repository_url") or "").rstrip("/").split("/")
             if len(url) < 2:
@@ -275,6 +284,10 @@ def run_discover_web(limit, language, label, min_contributors, me):
                 break
         if len(candidates) >= limit:
             break
+    if not candidates and search_errors and not searched:
+        # Every label search failed: total failure stays an error, never a
+        # silent empty success.
+        return f"error: live discover failed: {search_errors[0][1]}"
     ranked = []
     for owner, repo, number, updated_at in candidates:
         try:
@@ -298,7 +311,9 @@ def run_discover_web(limit, language, label, min_contributors, me):
         )
         ranked.append((points, updated_at, f"{owner}/{repo}#{number}", why, markers))
     if not ranked:
-        return "no GO candidates found live. Try again later or widen with --language/--label."
+        out = "no GO candidates found live. Try again later or widen with --language/--label."
+        notes = _search_error_notes(search_errors)
+        return out + ("\n" + "\n".join(notes) if notes else "")
     ranked.sort(key=lambda r: (r[0], r[1]), reverse=True)
     lines = [
         "taken? --discover",
@@ -309,7 +324,16 @@ def run_discover_web(limit, language, label, min_contributors, me):
         lines.append(f"{points:3}  {target}  {'; '.join(why)}{markers}")
     lines.append("")
     lines.append(f"{len(ranked)} GO candidate(s). Only GO verdicts are ranked.")
+    lines.extend(_search_error_notes(search_errors))
     return "\n".join(lines)
+
+
+def _search_error_notes(search_errors):
+    """One output line per failed label search, [] when none failed."""
+    return [
+        f'note: search for label "{lab}" failed ({err}); showing partial results.'
+        for lab, err in search_errors
+    ]
 
 
 def _parse_target(text):

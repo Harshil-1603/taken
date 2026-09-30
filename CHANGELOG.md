@@ -23,6 +23,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   the invariants contributors must not break.
 
 ### Fixed
+- REST `gh api` calls now pin `--method GET`: stock `gh` switches to POST
+  whenever `-f` parameters are added, which broke every parameterized read
+  for PyPI/Homebrew users on a real `gh` CLI. The GraphQL invocation keeps
+  its auto-POST (that endpoint only accepts POST).
 - Search pacing now actually caps in-flight searches at one: the lock is
   held through the pace wait, the search subprocess, and retries, instead
   of being released before the subprocess ran.

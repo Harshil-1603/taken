@@ -735,7 +735,11 @@ def gh_api(endpoint, params=None):
             record_cache_result(True)
             return cached
         record_cache_result(False)
-    cmd = ["gh", "api", endpoint.lstrip("/")]
+    cmd = ["gh", "api", "--method", "GET", endpoint.lstrip("/")]
+    # Pin the method explicitly: stock `gh` switches to POST whenever -f
+    # parameters are added, which would turn reads into writes (e.g. POST
+    # /repos/{o}/{r}/issues reads as "create an issue"). The GraphQL path
+    # builds its own command and intentionally keeps the auto-POST.
     for key_param, value in (params or {}).items():
         cmd.extend(["-f", f"{key_param}={value}"])
     if endpoint.lstrip("/").startswith("search/"):

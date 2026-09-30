@@ -180,35 +180,28 @@ class DiscoverResults(list):
 
     errors: candidates that failed with TakenError instead of a verdict.
     total: candidates that entered the verify pool.
+    search_errors: [(label, error)] for label searches that failed during
+    the per-label fallback; empty when the combined search succeeded, so
+    callers can tell "partial results" apart from "everything worked".
     """
 
-    def __init__(self, items=(), *, errors=0, total=0):
+    def __init__(self, items=(), *, errors=0, total=0, search_errors=()):
         super().__init__(items)
         self.errors = errors
         self.total = total
+        self.search_errors = list(search_errors)
 
 
-def _collect_candidates(labels, language, updated_after):
-    """Search once with all labels OR'd and fill the verify pool.
+def _pool_from_items(items, seen, limit):
+    """Fill the verify pool from search items, freshest first.
 
-    A single search/issues call covers every label, so a cold discover run
-    no longer fires a burst of back-to-back search calls into GitHub's
-    secondary rate limit. Results arrive sorted by recency (see
-    checks.search_issues), so the pool fills with the freshest candidates
-    first. Items are deduplicated by (owner, repo, number) as a safety net.
-
-    Returns (candidates, searched): the pool capped at VERIFY_POOL, and a
-    one-entry [(labels_summary, items_returned)] list so callers can report
-    what was searched. Per-label counts are no longer available: one query
-    cannot attribute results to individual labels without extra calls,
-    which is exactly what this change avoids.
+    Items are deduplicated by (owner, repo, number) as a safety net; seen
+    is shared so the per-label fallback cannot re-add an issue found under
+    an earlier label. Adds at most `limit` candidates.
     """
-    query = build_query(labels, language=language, updated_after=updated_after)
-    items = checks.search_issues(query, per_page=SEARCH_PER_PAGE)
     candidates = []
-    seen = set()
     for item in items:
-        if len(candidates) >= VERIFY_POOL:
+        if len(candidates) >= limit:
             break
         where = repo_of(item)
         if not where:
@@ -219,8 +212,68 @@ def _collect_candidates(labels, language, updated_after):
             continue
         seen.add(key)
         candidates.append((owner, repo, item.get("number"), item))
+    return candidates
+
+
+def _collect_candidates(labels, language, updated_after):
+    """Search once with all labels OR'd and fill the verify pool.
+
+    A single search/issues call covers every label, so a cold discover run
+    no longer fires a burst of back-to-back search calls into GitHub's
+    secondary rate limit. Results arrive sorted by recency (see
+    checks.search_issues), so the pool fills with the freshest candidates
+    first.
+
+    When the combined search raises (rate limit, transient failure), fall
+    back to one paced search per label so the run degrades to partial
+    results instead of dying with zero candidates (issue #162). When every
+    label fails too, the first error is re-raised: total failure stays an
+    error, never a silent empty success.
+
+    Returns (candidates, searched, search_errors): the pool capped at
+    VERIFY_POOL; a [(labels, count)] list so callers can report what was
+    searched (one entry for the combined query, one per label on the
+    fallback path); and a [(label, error)] list for labels whose fallback
+    search failed, empty on the normal path.
+    """
+    query = build_query(labels, language=language, updated_after=updated_after)
+    try:
+        items = checks.search_issues(query, per_page=SEARCH_PER_PAGE)
+    except checks.TakenError:
+        return _collect_candidates_per_label(labels, language, updated_after)
+    candidates = _pool_from_items(items, set(), VERIFY_POOL)
     searched = [(", ".join(labels), len(items))]
-    return candidates, searched
+    return candidates, searched, []
+
+
+def _collect_candidates_per_label(labels, language, updated_after):
+    """Fallback: one search per label when the combined query fails.
+
+    Keeps the candidates from the labels that succeeded and records which
+    label failed and why. Each search goes through the same pacing as the
+    normal path, so the fallback cannot burst into the secondary rate
+    limit it is trying to recover from.
+    """
+    candidates = []
+    searched = []
+    search_errors = []
+    seen = set()
+    for label in labels:
+        query = build_query(label, language=language, updated_after=updated_after)
+        try:
+            items = checks.search_issues(query, per_page=SEARCH_PER_PAGE)
+        except checks.TakenError as exc:
+            search_errors.append((label, str(exc)))
+            continue
+        searched.append((label, len(items)))
+        candidates.extend(_pool_from_items(items, seen, VERIFY_POOL - len(candidates)))
+        if len(candidates) >= VERIFY_POOL:
+            break
+    if not candidates and search_errors and not searched:
+        # Every label failed: re-raise instead of returning an empty
+        # success that looks like "no candidates found".
+        raise checks.TakenError(search_errors[0][1])
+    return candidates, searched, search_errors
 
 
 def discover(
@@ -248,10 +301,12 @@ def discover(
 
     Returns a DiscoverResults (a list of dicts sorted by score (desc),
     then recency (desc)) with .errors / .total stats, so callers can tell
-    "no GO candidates" apart from "verification kept failing":
-    target, score, why, verdict, reasons, findings, updated_at,
-    friendly_labels (first-time-contributor labels on the issue),
-    welcoming (repo-level signs contributions are welcome).
+    "no GO candidates" apart from "verification kept failing", plus
+    .search_errors [(label, error)] when the search phase fell back to
+    per-label queries and some of them failed: target, score, why, verdict,
+    reasons, findings, updated_at, friendly_labels (first-time-contributor
+    labels on the issue), welcoming (repo-level signs contributions are
+    welcome).
     """
     # A negative limit is meaningless; clamp to 0 (empty result) instead of
     # letting ranked[:limit] silently drop the top candidates. This also
@@ -259,7 +314,7 @@ def discover(
     limit = max(0, limit)
     updated_after = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%d")
     labels = [label] if label else SEARCH_LABELS
-    candidates, searched = _collect_candidates(labels, language, updated_after)
+    candidates, searched, search_errors = _collect_candidates(labels, language, updated_after)
     if on_searched is not None:
         on_searched(searched)
 
@@ -292,4 +347,4 @@ def discover(
     # (A single sort; the old double-sort accidentally left equal scores
     # oldest-first because the second stable sort preserved the first.)
     ranked.sort(key=lambda r: (r["score"], r["updated_at"]), reverse=True)
-    return DiscoverResults(ranked[:limit], errors=errors, total=total)
+    return DiscoverResults(ranked[:limit], errors=errors, total=total, search_errors=search_errors)

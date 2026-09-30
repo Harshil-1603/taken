@@ -318,6 +318,8 @@ def run_discover(args):
             bar.close()
         print(f"error: {exc}", file=sys.stderr)
         return 3
+    for label, error in results.search_errors:
+        print(f'warning: partial results: search failed for "{label}": {error}', file=sys.stderr)
     if bar is not None:
         bar.close()
     if not results:

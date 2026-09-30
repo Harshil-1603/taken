@@ -26,6 +26,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Search pacing now actually caps in-flight searches at one: the lock is
   held through the pace wait, the search subprocess, and retries, instead
   of being released before the subprocess ran.
+- Discover no longer aborts with zero candidates when the label search
+  fails: it falls back to one paced search per label, keeps the candidates
+  from the labels that succeeded, and reports which labels failed (CLI
+  warning, `DiscoverResults.search_errors`, MCP `search_errors`). When every
+  label fails the run still errors instead of returning an empty success.
 
 ## [0.7.3] - 2026-09-27
 

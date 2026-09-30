@@ -229,6 +229,10 @@ def discover_candidates(
         return {"effective_parameters": effective_parameters, "error": str(exc)}
     return {
         "effective_parameters": effective_parameters,
+        "search_errors": [
+            {"label": label, "error": error}
+            for label, error in getattr(results, "search_errors", [])
+        ],
         "results": [
             {
                 "target": item["target"],

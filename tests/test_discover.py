@@ -412,3 +412,94 @@ def test_discover_me_comment_case_insensitive(monkeypatch, capsys):
     assert main(["--discover", "--label", "good first issue", "--me", "roguealg0"]) == 0
     line = capsys.readouterr().out.strip("\n").splitlines()[0]
     assert "maintainer replied" not in line
+
+
+def test_discover_fallback_keeps_partial_candidates(monkeypatch, capsys):
+    # Combined search dies; one label's fallback search dies too. The run
+    # must keep the candidates from the surviving labels and report the
+    # failure, not abort with zero candidates. jobs=1 keeps the ranking
+    # deterministic (parallel completion order is arbitrary).
+    items = [search_item(1, 1), search_item(2, 2)]
+    for item in items:
+        item["updated_at"] = "2026-09-25T00:00:00Z"  # identical: ties keep pool order
+    base = make_fake([], {}, {})
+
+    def fake(endpoint, params=None):
+        if endpoint == "search/issues":
+            q = (params or {}).get("q", "")
+            if '","' in q:
+                raise checks.TakenError("secondary rate limit")
+            if '"good first issue"' in q:
+                raise checks.TakenError("boom")
+            return {
+                "total_count": len(items),
+                "incomplete_results": False,
+                "items": items,
+            }
+        return base(endpoint, params)
+
+    monkeypatch.setattr(checks, "gh_api", fake)
+    searched = []
+    results = discover.discover(jobs=1, limit=50, on_searched=searched.append)
+    targets = [r["target"] for r in results]
+    assert "octo/repo#1" in targets
+    assert "octo/repo#2" in targets
+    # the failed label is reported with its error ...
+    assert results.search_errors == [("good first issue", "boom")]
+    # ... and on_searched carries one entry per label that succeeded.
+    assert len(searched) == 1
+    assert sorted(lab for lab, _ in searched[0]) == sorted(
+        lab for lab in discover.SEARCH_LABELS if lab != "good first issue"
+    )
+
+
+def test_discover_fallback_reports_partial_results_on_cli(monkeypatch, capsys):
+    # The CLI must say the results are partial so a human (or a script
+    # reading stderr) does not mistake them for a full run.
+    items = [search_item(1, 1)]
+    base = make_fake([], {}, {})
+
+    def fake(endpoint, params=None):
+        if endpoint == "search/issues":
+            q = (params or {}).get("q", "")
+            if '","' in q or '"help wanted"' in q:
+                raise checks.TakenError("boom")
+            return {"total_count": len(items), "incomplete_results": False, "items": items}
+        return base(endpoint, params)
+
+    monkeypatch.setattr(checks, "gh_api", fake)
+    assert main(["--discover", "--no-progress"]) == 0
+    err = capsys.readouterr().err
+    assert "partial results" in err
+    assert '"help wanted"' in err
+
+
+def test_discover_raises_when_every_label_search_fails(monkeypatch):
+    # Total failure must stay an error, never a silent empty success.
+    def fake(endpoint, params=None):
+        if endpoint == "search/issues":
+            raise checks.TakenError("boom")
+        raise AssertionError(f"unexpected endpoint: {endpoint}")
+
+    monkeypatch.setattr(checks, "gh_api", fake)
+    with pytest.raises(checks.TakenError, match="boom"):
+        discover.discover(jobs=1)
+
+
+def test_discover_combined_search_success_reports_no_search_errors(monkeypatch):
+    # No behavior change on the happy path: one search call, no errors.
+    items = [search_item(1, 1)]
+    base = make_fake([], {}, {})
+    search_calls = []
+
+    def fake(endpoint, params=None):
+        if endpoint == "search/issues":
+            search_calls.append((params or {}).get("q", ""))
+            return {"total_count": len(items), "incomplete_results": False, "items": items}
+        return base(endpoint, params)
+
+    monkeypatch.setattr(checks, "gh_api", fake)
+    results = discover.discover(jobs=1, limit=50)
+    assert len(search_calls) == 1
+    assert results.search_errors == []
+    assert [r["target"] for r in results] == ["octo/repo#1"]

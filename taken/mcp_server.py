@@ -30,12 +30,18 @@ from taken import __version__, budget, checks, discover, graphql
 from taken.verdict import decide
 
 
-def _check_one(owner, repo, number, me=None, mode="rest"):
+def _check_one(owner, repo, number, me=None, mode=None):
     """Run the full check suite on one issue; return the tool payload.
 
-    GraphQL-family modes fall back to REST when the GraphQL transport
-    fails; the fallback is recorded in the findings.
+    ``mode`` selects the fetch path ("rest", "graphql", "persistent");
+    None resolves through ``graphql.fetch_mode()``, so a logged-in MCP
+    host gets the GraphQL default and an anonymous one stays on REST,
+    exactly like the CLI. GraphQL-family modes fall back to REST when
+    the GraphQL transport fails; the fallback is recorded in the
+    findings.
     """
+    if mode is None:
+        mode = graphql.fetch_mode()
     findings = graphql.run_checks_with_fallback(owner, repo, number, me=me, mode=mode)
     verdict, reasons = decide(findings)
     return {
@@ -60,13 +66,13 @@ def check_issue(
     me: str | None = None,
     graphql: Annotated[
         bool,
-        Field(description="Fetch via one GraphQL query (gh api graphql) instead of REST. Opt-in."),
+        Field(description="Force the GraphQL path. Default: automatic from auth state."),
     ] = False,
     persistent_session: Annotated[
         bool,
         Field(
-            description="GraphQL over one persistent HTTPS connection; token from "
-            "`gh auth token` held in memory only. Opt-in."
+            description="Force the persistent-session GraphQL path; token from "
+            "`gh auth token` held in memory only. Default: automatic from auth state."
         ),
     ] = False,
 ) -> dict:
@@ -85,10 +91,12 @@ def check_issue(
         repo: repository name
         issue_number: issue number to check
         me: your GitHub login; your own comments are ignored in the claimant scan
-        graphql: use the GraphQL fetch path (subprocess) instead of REST
-        persistent_session: use the persistent-session GraphQL path instead of REST
+        graphql: force the GraphQL fetch path instead of the automatic choice
+        persistent_session: force the persistent-session GraphQL path instead of the automatic one
     """
-    mode = "persistent" if persistent_session else ("graphql" if graphql else "rest")
+    # Explicit flags win; otherwise the transport is automatic from auth
+    # state (GraphQL when logged in, REST when anonymous), like the CLI.
+    mode = "persistent" if persistent_session else ("graphql" if graphql else None)
     try:
         return _check_one(owner, repo, issue_number, me=me, mode=mode)
     except checks.TakenError as exc:
@@ -227,6 +235,8 @@ def discover_candidates(
             me=me,
             jobs=discover.DEFAULT_JOBS,
             on_progress=None,
+            # Automatic from auth state (GraphQL when logged in), like the CLI.
+            mode=graphql.fetch_mode(),
         )
     except checks.TakenError as exc:
         return {"effective_parameters": effective_parameters, "error": str(exc)}

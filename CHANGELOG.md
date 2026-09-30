@@ -7,6 +7,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- GraphQL is now the default fetch path for logged-in users (`gh`
+  authenticated): one query per issue instead of ~10 REST calls, with
+  identical verdicts. REST remains the default for anonymous use, the
+  automatic per-issue fallback when the GraphQL transport fails (recorded
+  in the findings, never silent), and an escape hatch via `--rest` /
+  `TAKEN_REST=1`. Transport selection lives in `graphql.fetch_mode`, one
+  place for a future budget tier to pick the pipe.
+- GraphQL findings now include `"stages_skipped": []` for shape parity with
+  the REST path (the GraphQL path always runs every stage).
 - README now states what taken is for (in plain terms) before how it works,
   and links the live in-browser console.
 - CI now fails if the `taken --version` string in `docs/py/webshim.py`

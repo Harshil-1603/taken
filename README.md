@@ -68,8 +68,11 @@ Useful flags:
 - `--label LABEL`: scan mode only considers open issues carrying this label
 - `--no-cache`: bypass the API response cache
 - `--clear-cache`: delete the API response cache and exit
-- `--graphql`: fetch each issue with one GraphQL query (`gh api graphql`)
-  instead of ~10 REST calls; same verdicts, opt-in (or `TAKEN_GRAPHQL=1`)
+- `--graphql`: force the GraphQL fetch path even when not logged in to GitHub
+  (falls back to REST on failure); GraphQL is already the default for
+  logged-in users (or `TAKEN_GRAPHQL=1`)
+- `--rest`: force the REST fetch path even when logged in; escape hatch for
+  the GraphQL default (or `TAKEN_REST=1`)
 - `--persistent-session`: run the GraphQL query over one persistent HTTPS
   connection for the whole process; the token comes from `gh auth token`
   and is held in memory only. Opt-in (or `TAKEN_PERSISTENT_SESSION=1`);

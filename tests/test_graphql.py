@@ -105,27 +105,61 @@ def no_cache(monkeypatch):
 
 
 def _args(**kw):
-    args = argparse.Namespace(graphql=False, persistent_session=False)
+    args = argparse.Namespace(graphql=False, persistent_session=False, rest=False)
     for k, v in kw.items():
         setattr(args, k, v)
     return args
 
 
-def test_fetch_mode_defaults_to_rest():
+def _logged_in(monkeypatch):
+    """Pretend the invoker is authenticated to GitHub."""
+    monkeypatch.setattr(checks, "_github_identity", lambda: "someone")
+
+
+def _anonymous(monkeypatch):
+    """Pretend the invoker has no GitHub credentials."""
+    monkeypatch.setattr(checks, "_github_identity", lambda: None)
+
+
+def test_fetch_mode_rest_when_anonymous(monkeypatch):
+    _anonymous(monkeypatch)
     assert graphql.fetch_mode(_args()) == "rest"
     assert graphql.fetch_mode(None) == "rest"
 
 
-def test_fetch_mode_flag_and_env():
+def test_fetch_mode_graphql_when_authenticated(monkeypatch):
+    _logged_in(monkeypatch)
+    assert graphql.fetch_mode(_args()) == "graphql"
+    assert graphql.fetch_mode(None) == "graphql"
+
+
+def test_fetch_mode_flag_and_env(monkeypatch):
+    _anonymous(monkeypatch)
     assert graphql.fetch_mode(_args(graphql=True)) == "graphql"
     with mock.patch.dict(os.environ, {"TAKEN_GRAPHQL": "1"}):
         assert graphql.fetch_mode(_args()) == "graphql"
 
 
-def test_fetch_mode_persistent_wins():
+def test_fetch_mode_rest_escape_hatch(monkeypatch):
+    _logged_in(monkeypatch)
+    # --rest beats the authenticated default and beats --graphql, so there
+    # is always a way to force the REST path.
+    assert graphql.fetch_mode(_args(rest=True)) == "rest"
+    assert graphql.fetch_mode(_args(graphql=True, rest=True)) == "rest"
+    with mock.patch.dict(os.environ, {"TAKEN_REST": "1"}):
+        assert graphql.fetch_mode(_args()) == "rest"
+        assert graphql.fetch_mode(_args(graphql=True)) == "rest"
+
+
+def test_fetch_mode_persistent_wins(monkeypatch):
+    _logged_in(monkeypatch)
     assert graphql.fetch_mode(_args(persistent_session=True)) == "persistent"
     with mock.patch.dict(os.environ, {"TAKEN_PERSISTENT_SESSION": "1"}):
         assert graphql.fetch_mode(_args(graphql=True)) == "persistent"
+    # Persistent still wins over the rest escape hatch: it is the most
+    # explicit opt-in.
+    with mock.patch.dict(os.environ, {"TAKEN_PERSISTENT_SESSION": "1", "TAKEN_REST": "1"}):
+        assert graphql.fetch_mode(_args()) == "persistent"
 
 
 # --- error handling --------------------------------------------------------
@@ -334,7 +368,9 @@ def test_findings_shape_matches_rest_contract(monkeypatch):
         "ai_policy",
         "repo_health",
         "scan_truncated",
+        "stages_skipped",
     }
+    assert findings["stages_skipped"] == []
     assert set(findings["issue"]) == {
         "number",
         "state",
@@ -580,3 +616,122 @@ def test_mcp_check_issue_persistent_param(monkeypatch):
         mcp_server.check_issue("o", "r", 1, persistent_session=True)
         _, kwargs = rg.call_args
         assert kwargs["mode"] == "persistent"
+
+
+# --- transport fallback ----------------------------------------------------
+
+
+def _findings_with_transport(**over):
+    findings = _minimal_findings()
+    findings.update(over)
+    return findings
+
+
+def test_wrapper_rest_passthrough_sets_transport(monkeypatch):
+    with mock.patch.object(checks, "run_checks") as rc:
+        rc.return_value = _findings_with_transport()
+        findings = graphql.run_checks_with_fallback("o", "r", 1, mode="rest")
+        assert rc.call_count == 1
+        assert findings["transport"] == "rest"
+        assert "transport_fallback" not in findings
+
+
+def test_wrapper_graphql_success_records_transport(monkeypatch):
+    findings = _findings_with_transport()
+    with mock.patch.object(graphql, "run_checks_graphql", return_value=findings):
+        out = graphql.run_checks_with_fallback("o", "r", 1, mode="graphql")
+        assert out["transport"] == "graphql"
+        assert "transport_fallback" not in out
+
+
+def test_wrapper_falls_back_to_rest_on_graphql_failure(monkeypatch):
+    rest_findings = _findings_with_transport()
+    with mock.patch.object(graphql, "run_checks_graphql", side_effect=checks.TakenError("boom")):
+        with mock.patch.object(checks, "run_checks", return_value=rest_findings) as rc:
+            out = graphql.run_checks_with_fallback("o", "r", 1, mode="graphql")
+            assert rc.call_count == 1
+            assert out["transport"] == "rest"
+            assert "graphql" in out["transport_fallback"]
+            assert "REST" in out["transport_fallback"]
+            # The fallback verdict is the REST evidence's verdict: the
+            # transport keys must not change what decide() concludes.
+            assert decide(out)[0] == "GO"
+
+
+def test_wrapper_does_not_fall_back_on_not_found(monkeypatch):
+    with mock.patch.object(graphql, "run_checks_graphql", side_effect=checks.NotFoundError("gone")):
+        with mock.patch.object(checks, "run_checks") as rc:
+            with pytest.raises(checks.NotFoundError):
+                graphql.run_checks_with_fallback("o", "r", 1, mode="graphql")
+            assert rc.call_count == 0
+
+
+def test_cli_check_one_records_fallback_in_human_output(monkeypatch, capsys):
+    from taken import cli
+
+    rest_findings = _findings_with_transport()
+    rest_findings["transport_fallback"] = "graphql transport failed (boom); fell back to REST"
+    with mock.patch.object(graphql, "run_checks_graphql", side_effect=checks.TakenError("boom")):
+        with mock.patch.object(checks, "run_checks", return_value=rest_findings):
+            args = argparse.Namespace(
+                me=None, json=False, graphql=True, persistent_session=False, rest=False
+            )
+            cli.run_single("o/r#1", args)
+    out = capsys.readouterr().out
+    assert "fell back to REST" in out
+
+
+# --- verdict parity --------------------------------------------------------
+
+
+def _go_repo_node():
+    """Fixture with no TAKEN signals: open issue, no PRs, no claimants."""
+    repo = _repo_node_no_taken()
+    issue = repo["issue"]
+    issue["comments"] = {
+        "totalCount": 1,
+        "pageInfo": {"hasNextPage": False, "endCursor": None},
+        "nodes": [
+            {
+                "author": {"login": "maintainer"},
+                "body": "Thanks for the report, we will look into it.",
+                "createdAt": "2026-09-02T00:00:00Z",
+                "url": "https://github.com/o/r/issues/1#c1",
+            }
+        ],
+    }
+    repo["ai1"] = None  # no CONTRIBUTING: no AI-policy signal
+    return repo
+
+
+def test_verdict_parity_on_go_candidate(monkeypatch):
+    """REST findings vs GraphQL findings on the same GO-shaped evidence."""
+    findings = _run_with_fake_transport(monkeypatch, _payload(_go_repo_node()))
+    rest_findings = {
+        "target": "o/r#1",
+        "issue": {
+            "number": 1,
+            "state": "open",
+            "title": "Some issue",
+            "labels": ["good first issue"],
+            "assignees": [],
+            "comment_count": 1,
+            "author": "someone",
+            "url": "https://github.com/o/r/issues/1",
+            "created_at": "2026-09-01T00:00:00Z",
+        },
+        "linked_prs": [],
+        "claimants": [],
+        "ai_policy": {"verdict": "none-found", "snippet": "", "source": None},
+        "repo_health": {
+            "pushed_at": "2026-09-26",
+            "pushed_recently": True,
+            "recent_merges": 1,
+            "contributors": 2,
+            "contributors_window_days": 90,
+        },
+        "scan_truncated": {"timeline": False, "comments": False, "labels": False},
+        "stages_skipped": [],
+    }
+    assert decide(findings) == decide(rest_findings)
+    assert decide(findings)[0] == "GO"

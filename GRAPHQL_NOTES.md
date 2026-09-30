@@ -1,13 +1,16 @@
-# GraphQL fetch paths (opt-in)
+# GraphQL fetch paths
 
-`taken` ships three fetch paths for the single-issue pipeline. REST is the
-default; both GraphQL paths are opt-in and produce the same findings shape,
-so `verdict.decide()` is untouched.
+`taken` ships three fetch paths for the single-issue pipeline. GraphQL is
+the default for logged-in users (`gh` authenticated): one query per issue
+instead of ~10 REST calls, with identical verdicts. REST remains the
+default for anonymous use, the automatic per-issue fallback when the
+GraphQL transport fails, and always available via `--rest` /
+`TAKEN_REST=1`.
 
 | Path | Flag / env | Transport |
 | ---- | ---------- | --------- |
-| A. REST (default) | (none) | `gh api` subprocess per call, ~9-10 calls per issue |
-| B. GraphQL subprocess | `--graphql` / `TAKEN_GRAPHQL=1` | one `gh api graphql` query per issue (1 call typical, up to 4 with pagination) |
+| A. REST (anonymous default, fallback, escape hatch) | `--rest` / `TAKEN_REST=1` | `gh api` subprocess per call, ~9-10 calls per issue |
+| B. GraphQL subprocess (logged-in default) | `--graphql` / `TAKEN_GRAPHQL=1` | one `gh api graphql` query per issue (1 call typical, up to 4 with pagination) |
 | C. GraphQL persistent session | `--persistent-session` / `TAKEN_PERSISTENT_SESSION=1` | same query over one HTTPS keep-alive connection held for the process lifetime |
 
 ## What the query fetches

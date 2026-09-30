@@ -6,7 +6,7 @@ import re
 import sys
 import time
 
-from taken import __version__, checks, discover, graphql
+from taken import __version__, budget, checks, discover, graphql
 from taken.verdict import CAUTION, GO, TAKEN, decide
 
 EXIT_CODES = {GO: 0, TAKEN: 1, CAUTION: 2}
@@ -130,14 +130,8 @@ def build_parser():
     parser.add_argument(
         "--graphql",
         action="store_true",
-        help="force the GraphQL fetch path even when not logged in to GitHub "
-        "(falls back to REST on failure); the default for logged-in users",
-    )
-    parser.add_argument(
-        "--rest",
-        action="store_true",
-        help="force the REST fetch path even when logged in to GitHub; "
-        "escape hatch for the GraphQL default (or TAKEN_REST=1)",
+        help="fetch issue data via one GraphQL query per issue (gh api graphql) "
+        "instead of REST; opt-in, same verdicts",
     )
     parser.add_argument(
         "--persistent-session",
@@ -161,14 +155,6 @@ def format_human(findings, verdict, reasons):
         f"taken? {findings['target']}",
         f"verdict: {verdict}",
         "",
-    ]
-    # A GraphQL->REST fallback is honest evidence about the check itself:
-    # say so up front so the verdict is never read as more confident than
-    # the transport that produced it.
-    if findings.get("transport_fallback"):
-        lines.append(f"  note: {findings['transport_fallback']}")
-        lines.append("")
-    lines += [
         f'  issue: {issue["state"]}, "{issue["title"]}"',
         f"         {issue['url']} ({issue['comment_count']} comments)",
     ]
@@ -266,7 +252,11 @@ def _run_with_stats(func, *fargs, verbose=False, debug=False):
     state before/after, retries, backoff time). Both go to stderr so
     --json stdout stays clean for piping, and both print even when the
     run fails (exit 3), which is exactly when the numbers matter most.
+
+    The budget line (tier + requests used) prints on every run, verbose
+    or not: per-run accounting is local only, never telemetry.
     """
+    budget.activate()
     checks.reset_api_stats()
     rate_start = checks.rate_limit_snapshot() if debug else None
     start = time.perf_counter()
@@ -275,6 +265,7 @@ def _run_with_stats(func, *fargs, verbose=False, debug=False):
     finally:
         total = time.perf_counter() - start
         rate_end = checks.rate_limit_snapshot() if debug else None
+        print(checks.budget_line(), file=sys.stderr)
         if verbose or debug:
             print(checks.api_stats_summary(), file=sys.stderr)
         if debug:
@@ -359,6 +350,7 @@ def run_discover(args):
             print("no candidates passed verification", file=sys.stderr)
         return 0
     if args.json:
+        budget = checks.budget_report()
         print(
             json.dumps(
                 [
@@ -371,6 +363,7 @@ def run_discover(args):
                         "findings": r["findings"],
                         "friendly_labels": r["friendly_labels"],
                         "welcoming": r["welcoming"],
+                        "budget": budget,
                     }
                     for r in results
                 ],
@@ -384,12 +377,11 @@ def run_discover(args):
 
 
 def check_one(owner, repo, number, me, mode="rest"):
-    """Run the full check on one issue. Returns (target, verdict, reasons, findings).
-
-    GraphQL-family modes fall back to REST per issue when the GraphQL
-    transport fails; the fallback is recorded in the findings.
-    """
-    findings = graphql.run_checks_with_fallback(owner, repo, number, me=me, mode=mode)
+    """Run the full check on one issue. Returns (target, verdict, reasons, findings)."""
+    if mode in ("graphql", "persistent"):
+        findings = graphql.run_checks_graphql(owner, repo, number, me=me, mode=mode)
+    else:
+        findings = checks.run_checks(owner, repo, number, me=me)
     verdict, reasons = decide(findings)
     return f"{owner}/{repo}#{number}", verdict, reasons, findings
 
@@ -432,7 +424,13 @@ def run_single(text, args):
     if args.json:
         print(
             json.dumps(
-                {"target": target, "verdict": verdict, "reasons": reasons, "findings": findings},
+                {
+                    "target": target,
+                    "verdict": verdict,
+                    "reasons": reasons,
+                    "findings": findings,
+                    "budget": checks.budget_report(),
+                },
                 indent=2,
             )
         )
@@ -495,6 +493,7 @@ def run_batch(targets, args):
                 print(f"error: {text}: {exc}", file=sys.stderr)
                 failed = True
     if args.json:
+        budget = checks.budget_report()
         print(
             json.dumps(
                 [
@@ -503,6 +502,7 @@ def run_batch(targets, args):
                         "verdict": verdict,
                         "reasons": reasons,
                         "findings": findings,
+                        "budget": budget,
                     }
                     for target, verdict, reasons, findings in results
                 ],

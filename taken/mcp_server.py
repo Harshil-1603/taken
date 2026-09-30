@@ -26,17 +26,16 @@ except ImportError:  # pydantic ships with the `mcp` dependency
         return kwargs
 
 
-from taken import __version__, checks, discover, graphql
+from taken import __version__, budget, checks, discover, graphql
 from taken.verdict import decide
 
 
 def _check_one(owner, repo, number, me=None, mode="rest"):
-    """Run the full check suite on one issue; return the tool payload.
-
-    GraphQL-family modes fall back to REST when the GraphQL transport
-    fails; the fallback is recorded in the findings.
-    """
-    findings = graphql.run_checks_with_fallback(owner, repo, number, me=me, mode=mode)
+    """Run the full check suite on one issue; return the tool payload."""
+    if mode in ("graphql", "persistent"):
+        findings = graphql.run_checks_graphql(owner, repo, number, me=me, mode=mode)
+    else:
+        findings = checks.run_checks(owner, repo, number, me=me)
     verdict, reasons = decide(findings)
     return {
         "target": f"{owner}/{repo}#{number}",
@@ -45,6 +44,7 @@ def _check_one(owner, repo, number, me=None, mode="rest"):
         "findings": findings,
         "friendly_labels": checks.friendly_labels(findings),
         "welcoming": checks.welcoming_signals(findings),
+        "budget": checks.budget_report(),
     }
 
 
@@ -164,6 +164,7 @@ def scan_repo(
         "results": results,
         "recommendations": [r["target"] for r in results if r.get("verdict") == "GO"],
         "summary": summary,
+        "budget": checks.budget_report(),
     }
 
 
@@ -246,6 +247,7 @@ def discover_candidates(
             }
             for item in results
         ],
+        "budget": checks.budget_report(),
     }
 
 
@@ -284,6 +286,7 @@ def main():
             file=sys.stderr,
         )
         return 2
+    budget.activate()
     mcp.run(transport="stdio")
     return 0
 

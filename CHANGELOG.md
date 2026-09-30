@@ -7,6 +7,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- MCP server gets the same GraphQL-first behavior as the CLI: `check_issue`,
+  `scan_repo`, and `discover_candidates` now resolve the fetch path through
+  `graphql.fetch_mode()` (GraphQL when logged in, REST when anonymous), with
+  REST fallback recorded in the findings. Tool schemas are unchanged; the
+  existing optional `graphql`/`persistent_session` flags still force a path,
+  and `TAKEN_REST=1` still forces REST. The MCP entry point also activates
+  the budget tier once `taken/budget.py` lands (#223).
 - GraphQL is now the default fetch path for logged-in users (`gh`
   authenticated): one query per issue instead of ~10 REST calls, with
   identical verdicts. REST remains the default for anonymous use, the

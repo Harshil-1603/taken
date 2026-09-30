@@ -31,6 +31,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   from the labels that succeeded, and reports which labels failed (CLI
   warning, `DiscoverResults.search_errors`, MCP `search_errors`). When every
   label fails the run still errors instead of returning an empty success.
+- Discover reuses each search result's issue fields instead of re-fetching
+  the issue over REST: one fewer API call per candidate, up to 40 saved per
+  run. The plain `taken owner/repo#123` path is unchanged.
 
 ## [0.7.3] - 2026-09-27
 

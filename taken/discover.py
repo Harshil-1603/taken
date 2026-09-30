@@ -145,7 +145,10 @@ def _verify_candidate(owner, repo, number, item, min_contributors, me, mode="res
                 owner, repo, number, me=me, mode=mode, session=session
             )
         else:
-            findings = checks.run_checks(owner, repo, number, me=me)
+            # The search item already carries every field check_issue()
+            # needs, so the per-issue GET is skipped (issue #153): one
+            # fewer API call per candidate, up to VERIFY_POOL per run.
+            findings = checks.run_checks(owner, repo, number, me=me, payload=item)
     except checks.TakenError as exc:
         return None, exc  # fail-closed per issue; keep scanning the rest
     verdict, reasons = decide(findings)

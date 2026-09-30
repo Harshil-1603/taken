@@ -777,8 +777,61 @@ def _paged_list(endpoint, params=None):
     return items, truncated
 
 
-def check_issue(owner, repo, number):
-    """Fetch the basic facts about an issue."""
+# Raw fields check_issue() reads from an issue payload. A search/issues
+# result item carries every one of them, so the discover path can skip the
+# redundant per-issue GET when they are all present (issue #153).
+_ISSUE_PAYLOAD_FIELDS = (
+    "state",
+    "title",
+    "labels",
+    "assignees",
+    "comments",
+    "user",
+    "html_url",
+    "created_at",
+)
+
+
+def _issue_facts_from_payload(payload, number):
+    """Build check_issue()'s facts dict from a search/issues item.
+
+    Returns None when the payload is missing anything check_issue() would
+    extract, so the caller falls back to the plain GET instead of
+    verdicting on incomplete evidence.
+    """
+    if not isinstance(payload, dict):
+        return None
+    try:
+        if any(payload.get(field) is None for field in _ISSUE_PAYLOAD_FIELDS):
+            return None
+        return {
+            "number": number,
+            "state": payload["state"],
+            "title": payload["title"],
+            "labels": [label["name"] for label in payload["labels"]],
+            "assignees": [user["login"] for user in payload["assignees"]],
+            "comment_count": payload["comments"],
+            "author": (payload["user"] or {}).get("login"),
+            "url": payload["html_url"],
+            "created_at": payload["created_at"],
+        }
+    except (KeyError, TypeError, AttributeError):
+        # Malformed payload: not evidence of anything. The caller falls
+        # back to the plain GET.
+        return None
+
+
+def check_issue(owner, repo, number, payload=None):
+    """Fetch the basic facts about an issue.
+
+    When `payload` is a pre-fetched search/issues item carrying every field
+    above, the redundant GET is skipped. An incomplete payload falls back
+    to the GET, so the plain path behaves exactly as before.
+    """
+    if payload is not None:
+        facts = _issue_facts_from_payload(payload, number)
+        if facts is not None:
+            return facts
     endpoint = f"repos/{owner}/{repo}/issues/{number}"
     data = _require_dict(gh_api(endpoint), endpoint)
     return {
@@ -1028,8 +1081,13 @@ def check_repo_health(owner, repo, window_days=HEALTH_WINDOW_DAYS):
     }
 
 
-def run_checks(owner, repo, number, me=None):
+def run_checks(owner, repo, number, me=None, payload=None):
     """Run the full read-only check suite on one issue; return findings.
+
+    `payload` is an optional pre-fetched search/issues item: when it
+    carries every field check_issue() needs, the per-issue GET is skipped
+    (issue #153). The plain path passes nothing and behaves exactly as
+    before.
 
     Fetches run cheapest-decisive-first and stop early as soon as decide()
     reports TAKEN: the issue call alone settles closed and assigned issues,
@@ -1046,7 +1104,7 @@ def run_checks(owner, repo, number, me=None):
     TAKEN. Every TAKEN-capable signal (issue state/assignees, then linked
     PRs) is fully fetched before its decide() check runs (issue #125).
     """
-    issue = check_issue(owner, repo, number)
+    issue = check_issue(owner, repo, number, payload=payload)
     findings = {
         "target": f"{owner}/{repo}#{number}",
         "issue": issue,

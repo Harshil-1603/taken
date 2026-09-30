@@ -8,6 +8,7 @@ import pytest
 
 from taken import checks, discover
 from taken.cli import main
+from taken.verdict import TAKEN, decide
 
 
 def search_item(number, days_ago):
@@ -503,3 +504,97 @@ def test_discover_combined_search_success_reports_no_search_errors(monkeypatch):
     assert len(search_calls) == 1
     assert results.search_errors == []
     assert [r["target"] for r in results] == ["octo/repo#1"]
+
+
+def full_search_item(number, days_ago):
+    """A search item carrying every field check_issue() extracts.
+
+    Mirrors make_fake's issue-endpoint response for a "go" issue, so the
+    payload path and the re-fetch path must produce identical facts.
+    """
+    item = search_item(number, days_ago)
+    item.update(
+        {
+            "state": "open",
+            "labels": [],
+            "assignees": [],
+            "comments": 0,
+            "created_at": "2026-01-01T00:00:00Z",
+        }
+    )
+    return item
+
+
+def test_discover_skips_issue_get_with_complete_search_item(monkeypatch):
+    """A complete search item must skip the per-issue GET (issue #153)."""
+    items = [full_search_item(1, 1)]
+    issue_gets = []
+    base = make_fake(items, {1: "go"}, {})
+
+    def fake(endpoint, params=None):
+        if endpoint == "repos/octo/repo/issues/1":
+            issue_gets.append(endpoint)
+        return base(endpoint, params)
+
+    monkeypatch.setattr(checks, "gh_api", fake)
+    results = discover.discover(label="good first issue", jobs=1)
+    assert [r["target"] for r in results] == ["octo/repo#1"]
+    assert issue_gets == []  # fields came from the search item, not a GET
+
+
+def test_payload_issue_facts_match_refetch(monkeypatch):
+    """Payload-derived facts must equal the re-fetched facts."""
+    items = [full_search_item(1, 1)]
+    monkeypatch.setattr(checks, "gh_api", make_fake(items, {1: "go"}, {}))
+    assert checks.check_issue("octo", "repo", 1, payload=items[0]) == checks.check_issue(
+        "octo", "repo", 1
+    )
+
+
+def test_incomplete_payload_falls_back_to_get(monkeypatch):
+    """A search item missing a needed field must take the plain GET path."""
+    items = [search_item(1, 1)]  # sparse: no state/labels/assignees/comments
+    issue_gets = []
+    base = make_fake(items, {1: "go"}, {})
+
+    def fake(endpoint, params=None):
+        if endpoint == "repos/octo/repo/issues/1":
+            issue_gets.append(endpoint)
+        return base(endpoint, params)
+
+    monkeypatch.setattr(checks, "gh_api", fake)
+    findings = checks.run_checks("octo", "repo", 1, payload=items[0])
+    assert issue_gets == ["repos/octo/repo/issues/1"]  # exactly one GET
+    assert findings["issue"]["state"] == "open"
+
+
+def test_plain_run_checks_still_fetches_once(monkeypatch):
+    """The no-payload path (plain CLI) must be unchanged: exactly one GET."""
+    items = [search_item(1, 1)]
+    issue_gets = []
+    base = make_fake(items, {1: "go"}, {})
+
+    def fake(endpoint, params=None):
+        if endpoint == "repos/octo/repo/issues/1":
+            issue_gets.append(endpoint)
+        return base(endpoint, params)
+
+    monkeypatch.setattr(checks, "gh_api", fake)
+    findings = checks.run_checks("octo", "repo", 1)
+    assert issue_gets == ["repos/octo/repo/issues/1"]
+    assert findings["issue"]["state"] == "open"
+
+
+def test_payload_closed_state_verdicts_taken_without_get(monkeypatch):
+    """The payload's own fields drive the verdict: closed -> TAKEN, zero GETs."""
+    item = full_search_item(1, 1)
+    item["state"] = "closed"
+
+    def fake(endpoint, params=None):
+        raise AssertionError(f"no API calls expected, got: {endpoint}")
+
+    monkeypatch.setattr(checks, "gh_api", fake)
+    findings = checks.run_checks("octo", "repo", 1, payload=item)
+    verdict, reasons = decide(findings)
+    assert verdict == TAKEN
+    assert any("closed" in reason for reason in reasons)

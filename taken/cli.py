@@ -36,6 +36,16 @@ def parse_target(text):
     return None
 
 
+def _parse_error(text):
+    """Print the standard unparseable-target error; return exit code 3."""
+    print(
+        f"error: could not parse {text!r}; "
+        "use owner/repo#123, an issue URL, or owner/repo to scan",
+        file=sys.stderr,
+    )
+    return 3
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="taken",
@@ -254,6 +264,11 @@ def main(argv=None):
     if not targets:
         parser.error("need at least one target, --file, or --discover")
     if len(targets) == 1:
+        if not parse_target(targets[0]):
+            # Fail before _run_with_stats: a usage error must exit 3
+            # without touching the network, so the budget identity probe
+            # (and any other subprocess call) must not fire.
+            return _parse_error(targets[0])
         return _run_with_stats(run_single, targets[0], args, verbose=args.verbose, debug=args.debug)
     return _run_with_stats(run_batch, targets, args, verbose=args.verbose, debug=args.debug)
 
@@ -420,12 +435,7 @@ def run_clear_cache():
 def run_single(text, args):
     parsed = parse_target(text)
     if not parsed:
-        print(
-            f"error: could not parse {text!r}; "
-            "use owner/repo#123, an issue URL, or owner/repo to scan",
-            file=sys.stderr,
-        )
-        return 3
+        return _parse_error(text)
     if parsed[0] == "repo":
         return run_batch([text], args)
     _, owner, repo, number = parsed
@@ -476,11 +486,7 @@ def run_batch(targets, args):
     for text in targets:
         parsed = parse_target(text)
         if not parsed:
-            print(
-                f"error: could not parse {text!r}; "
-                "use owner/repo#123, an issue URL, or owner/repo to scan",
-                file=sys.stderr,
-            )
+            _parse_error(text)
             failed = True
             continue
         if parsed[0] == "repo":

@@ -464,6 +464,61 @@ def test_comment_pagination_follows_cursor(monkeypatch):
     assert {c["author"] for c in findings["claimants"]} == {"volunteer", "second"}
 
 
+def _repo_node_no_taken(**over):
+    """Repo fixture with no TAKEN signals, so CAUTION reasons surface."""
+    repo = _repo_node(**over)
+    repo["issue"]["timelineItems"] = {
+        "pageInfo": {"hasNextPage": False, "endCursor": None},
+        "nodes": [],
+    }
+    repo["issue"]["assignees"] = {"nodes": []}
+    return repo
+
+
+def test_label_pagination_follows_cursor(monkeypatch):
+    page1 = _repo_node_no_taken()
+    page1["issue"]["labels"] = {
+        "totalCount": 3,
+        "pageInfo": {"hasNextPage": True, "endCursor": "l1"},
+        "nodes": [{"name": "good first issue"}, {"name": "bug"}],
+    }
+    page2 = _repo_node_no_taken()
+    page2["issue"]["labels"] = {
+        "totalCount": 3,
+        "pageInfo": {"hasNextPage": False, "endCursor": None},
+        "nodes": [{"name": "needs design"}],
+    }
+    calls = []
+
+    def fake_fetch(q, v):
+        calls.append(v.get("labelsAfter"))
+        return {"data": {"repository": page2 if v.get("labelsAfter") else page1}}
+
+    monkeypatch.setattr(graphql, "graphql_via_gh", fake_fetch)
+    findings = graphql.run_checks_graphql("o", "r", 1, mode="graphql")
+    assert calls == [None, "l1"]
+    assert findings["issue"]["labels"] == ["good first issue", "bug", "needs design"]
+    assert findings["scan_truncated"]["labels"] is False
+    # The design label past the first page is CAUTION context that used to
+    # be silently dropped.
+    _verdict, reasons = decide(findings)
+    assert any("needs design" in r for r in reasons)
+
+
+def test_label_truncation_is_surfaced(monkeypatch):
+    monkeypatch.setattr(graphql, "_MAX_LABEL_PAGES", 1)
+    repo = _repo_node_no_taken()
+    repo["issue"]["labels"] = {
+        "totalCount": 250,
+        "pageInfo": {"hasNextPage": True, "endCursor": "l1"},
+        "nodes": [{"name": "good first issue"}],
+    }
+    findings = _run_with_fake_transport(monkeypatch, _payload(repo))
+    assert findings["scan_truncated"]["labels"] is True
+    _verdict, reasons = decide(findings)
+    assert any("label scan hit the page cap" in r for r in reasons)
+
+
 # --- CLI / MCP plumbing -----------------------------------------------------
 
 

@@ -111,7 +111,7 @@ def test_short_page_is_not_truncation(monkeypatch):
 def test_truncated_timeline_downgrades_go_to_caution(monkeypatch):
     _quiet_run_checks_fake(monkeypatch, timeline_pages=5)
     findings = checks.run_checks("o", "r", 1)
-    assert findings["scan_truncated"] == {"timeline": True, "comments": False}
+    assert findings["scan_truncated"] == {"timeline": True, "comments": False, "labels": False}
     verdict, reasons = decide(findings)
     assert verdict == CAUTION
     assert any("timeline scan hit the page cap" in r for r in reasons)
@@ -120,7 +120,7 @@ def test_truncated_timeline_downgrades_go_to_caution(monkeypatch):
 def test_truncated_comments_downgrade_go_to_caution(monkeypatch):
     _quiet_run_checks_fake(monkeypatch, comment_pages=5)
     findings = checks.run_checks("o", "r", 1)
-    assert findings["scan_truncated"] == {"timeline": False, "comments": True}
+    assert findings["scan_truncated"] == {"timeline": False, "comments": True, "labels": False}
     verdict, reasons = decide(findings)
     assert verdict == CAUTION
     assert any("comment scan hit the page cap" in r for r in reasons)
@@ -129,7 +129,7 @@ def test_truncated_comments_downgrade_go_to_caution(monkeypatch):
 def test_untruncated_scan_stays_go(monkeypatch):
     _quiet_run_checks_fake(monkeypatch)
     findings = checks.run_checks("o", "r", 1)
-    assert findings["scan_truncated"] == {"timeline": False, "comments": False}
+    assert findings["scan_truncated"] == {"timeline": False, "comments": False, "labels": False}
     verdict, _ = decide(findings)
     assert verdict == GO
 
@@ -220,7 +220,7 @@ def test_graphql_findings_flag_truncated_timeline(monkeypatch):
 
     monkeypatch.setattr(graphql, "graphql_via_gh", lambda q, v: payload())
     findings = graphql.run_checks_graphql("o", "r", 1, mode="graphql")
-    assert findings["scan_truncated"] == {"timeline": True, "comments": False}
+    assert findings["scan_truncated"] == {"timeline": True, "comments": False, "labels": False}
     verdict, reasons = decide(findings)
     assert verdict == CAUTION
     assert any("timeline scan hit the page cap" in r for r in reasons)

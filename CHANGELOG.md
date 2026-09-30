@@ -42,6 +42,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Discover reuses each search result's issue fields instead of re-fetching
   the issue over REST: one fewer API call per candidate, up to 40 saved per
   run. The plain `taken owner/repo#123` path is unchanged.
+- GraphQL fetch no longer silently drops labels beyond the first 30: the
+  labels connection now requests `pageInfo` and paginates (up to 300 labels,
+  one or two extra queries worst case). If the cap is ever hit, the run
+  reports it as a CAUTION truncation reason through the existing honesty
+  machinery instead of silently losing label context.
 
 ## [0.7.3] - 2026-09-27
 

@@ -38,6 +38,9 @@ _MAX_COMMENT_PAGES = 5
 _MAX_TIMELINE_PAGES = 5
 _MAX_HISTORY_PAGES = 3
 _MAX_MERGE_PAGES = 2
+# Labels are tiny: 3 pages x 100 covers 300 labels, far beyond any
+# realistic issue, at one or two extra queries worst case.
+_MAX_LABEL_PAGES = 3
 _PAGE_SIZE = 100
 
 GRAPHQL_TIMEOUT = 60
@@ -47,7 +50,8 @@ _RATE_LIMITED_RE = re.compile(r"RATE_LIMITED", re.IGNORECASE)
 ISSUE_QUERY = """
 query IssueVerdict(
   $owner: String!, $repo: String!, $number: Int!, $since: GitTimestamp,
-  $commentsAfter: String, $timelineAfter: String, $historyAfter: String, $prsAfter: String
+  $commentsAfter: String, $timelineAfter: String, $historyAfter: String, $prsAfter: String,
+  $labelsAfter: String
 ) {
   repository(owner: $owner, name: $repo) {
     pushedAt
@@ -58,7 +62,11 @@ query IssueVerdict(
       createdAt
       author { login }
       assignees(first: 20) { nodes { login } }
-      labels(first: 30) { nodes { name } }
+      labels(first: 100, after: $labelsAfter) {
+        totalCount
+        pageInfo { hasNextPage endCursor }
+        nodes { name }
+      }
       comments(first: 100, after: $commentsAfter) {
         totalCount
         pageInfo { hasNextPage endCursor }
@@ -389,11 +397,12 @@ def _map_issue(issue_node, number):
         raise checks.NotFoundError("issue not found")
     author = issue_node.get("author") or {}
     comments = issue_node.get("comments") or {}
+    labels = issue_node.get("labels") or {}
     return {
         "number": number,
         "state": (issue_node.get("state") or "").lower(),
         "title": issue_node.get("title"),
-        "labels": [n.get("name") for n in (issue_node.get("labels") or {}).get("nodes", [])],
+        "labels": [n.get("name") for n in labels.get("nodes", [])],
         "assignees": [n.get("login") for n in (issue_node.get("assignees") or {}).get("nodes", [])],
         "comment_count": comments.get("totalCount", 0),
         "author": author.get("login"),
@@ -401,6 +410,8 @@ def _map_issue(issue_node, number):
         "created_at": issue_node.get("createdAt"),
         "_comment_nodes": comments.get("nodes", []),
         "_comment_page": comments.get("pageInfo") or {},
+        "_label_nodes": labels.get("nodes", []),
+        "_label_page": labels.get("pageInfo") or {},
     }
 
 
@@ -568,6 +579,22 @@ def run_checks_graphql(owner, repo, number, me=None, mode="graphql", session=Non
             _MAX_COMMENT_PAGES,
         )
 
+    # Labels paginate like comments/timeline: an issue can carry more
+    # labels than one page holds, and a design-level label past the
+    # first page is CAUTION context we must not silently drop.
+    label_nodes = list(issue.pop("_label_nodes"))
+    label_page = issue.pop("_label_page")
+    labels_truncated = False
+    if label_page.get("hasNextPage"):
+        label_nodes, labels_truncated = _paginate(
+            {"nodes": label_nodes, "pageInfo": label_page},
+            lambda v: refetch(v)["issue"]["labels"],
+            variables,
+            "labelsAfter",
+            _MAX_LABEL_PAGES,
+        )
+        issue["labels"] = [n.get("name") for n in label_nodes]
+
     issue_node = repository.get("issue") or {}
     timeline_conn = issue_node.get("timelineItems") or {}
     timeline_nodes = list(timeline_conn.get("nodes", []))
@@ -637,6 +664,7 @@ def run_checks_graphql(owner, repo, number, me=None, mode="graphql", session=Non
         "scan_truncated": {
             "timeline": timeline_truncated,
             "comments": comments_truncated,
+            "labels": labels_truncated,
         },
     }
 

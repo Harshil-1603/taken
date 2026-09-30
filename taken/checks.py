@@ -1132,10 +1132,13 @@ def run_checks(owner, repo, number, me=None, payload=None):
             "skipped": True,
         },
         # Which evidence scans stopped early at the page cap. decide() uses
-        # this to avoid a silent GO on incomplete evidence.
+        # this to avoid a silent GO on incomplete evidence. The REST issue
+        # payload carries every label, so "labels" is always False here;
+        # the key exists for shape parity with the GraphQL findings.
         "scan_truncated": {
             "timeline": False,
             "comments": False,
+            "labels": False,
         },
         # Stages never fetched because decide() already reported TAKEN.
         # format_human() renders these as "not checked" so a skipped stage

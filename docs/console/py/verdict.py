@@ -61,13 +61,17 @@ LONG_THREAD_COMMENTS = 30
 
 
 def _truncation_reasons(findings):
-    """CAUTION reasons for timeline/comment scans that stopped at the page cap."""
+    """CAUTION reasons for timeline/comment/label scans that stopped at the page cap."""
     reasons = []
     scan_truncated = findings.get("scan_truncated") or {}
     if scan_truncated.get("timeline"):
         reasons.append("timeline scan hit the page cap; a linked PR beyond the cap would be missed")
     if scan_truncated.get("comments"):
         reasons.append("comment scan hit the page cap; a claimant beyond the cap would be missed")
+    if scan_truncated.get("labels"):
+        reasons.append(
+            "label scan hit the page cap; a design-level label beyond the cap would be missed"
+        )
     return reasons
 
 

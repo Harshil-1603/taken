@@ -141,7 +141,9 @@ def _verify_candidate(owner, repo, number, item, min_contributors, me, mode="res
     try:
         if mode in ("graphql", "persistent"):
             session = _thread_graphql_session() if mode == "persistent" else None
-            findings = graphql.run_checks_graphql(
+            # The wrapper falls back to REST per candidate when the GraphQL
+            # transport fails, and records the fallback in the findings.
+            findings = graphql.run_checks_with_fallback(
                 owner, repo, number, me=me, mode=mode, session=session
             )
         else:

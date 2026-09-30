@@ -31,11 +31,12 @@ from taken.verdict import decide
 
 
 def _check_one(owner, repo, number, me=None, mode="rest"):
-    """Run the full check suite on one issue; return the tool payload."""
-    if mode in ("graphql", "persistent"):
-        findings = graphql.run_checks_graphql(owner, repo, number, me=me, mode=mode)
-    else:
-        findings = checks.run_checks(owner, repo, number, me=me)
+    """Run the full check suite on one issue; return the tool payload.
+
+    GraphQL-family modes fall back to REST when the GraphQL transport
+    fails; the fallback is recorded in the findings.
+    """
+    findings = graphql.run_checks_with_fallback(owner, repo, number, me=me, mode=mode)
     verdict, reasons = decide(findings)
     return {
         "target": f"{owner}/{repo}#{number}",
@@ -279,6 +280,7 @@ except ImportError:  # `mcp` is required; this only triggers on a broken install
 
 def main():
     """Entry point for the ``taken-mcp`` console script."""
+    budget.activate()
     if mcp is None:
         print(
             "taken-mcp needs the MCP SDK, which ships with taken-gh: "
@@ -286,7 +288,6 @@ def main():
             file=sys.stderr,
         )
         return 2
-    budget.activate()
     mcp.run(transport="stdio")
     return 0
 

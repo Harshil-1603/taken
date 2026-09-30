@@ -1,4 +1,4 @@
-"""GraphQL fetch path for taken (opt-in).
+"""GraphQL fetch path for taken.
 
 Produces the exact same findings-dict shape as ``checks.run_checks`` so
 ``verdict.decide()`` is untouched. Two transports:
@@ -10,9 +10,10 @@ Produces the exact same findings-dict shape as ``checks.run_checks`` so
   ``gh auth token`` once at startup, is held in memory only, and is never
   logged or written to disk. Explicit opt-in only.
 
-REST remains the default; both GraphQL paths are opt-in via ``--graphql``
-/ ``TAKEN_GRAPHQL=1`` and ``--persistent-session`` /
-``TAKEN_PERSISTENT_SESSION=1``.
+GraphQL is the default for authenticated invokers (``gh`` logged in);
+REST remains the default for anonymous use and is always available as an
+escape hatch (``--rest`` / ``TAKEN_REST=1``) and as the automatic fallback
+when the GraphQL transport fails for a check.
 """
 
 import hashlib
@@ -116,17 +117,45 @@ query IssueVerdict(
 """
 
 
+def _is_authenticated():
+    """True when the invoker is logged in to GitHub via `gh`.
+
+    Reuses the memoized identity probe from checks, so this costs one
+    subprocess per process at most. A failed probe means unauthenticated,
+    and REST stays the safe default.
+    """
+    try:
+        return checks._github_identity() is not None
+    except Exception:
+        return False
+
+
 def fetch_mode(args=None):
     """Resolve which fetch path to use: "rest" | "graphql" | "persistent".
 
-    Persistent implies the GraphQL query over a keep-alive session and wins
-    over plain GraphQL when both are requested.
+    Selection order (first match wins):
+
+    1. explicit persistent (``--persistent-session`` /
+       ``TAKEN_PERSISTENT_SESSION=1``)
+    2. explicit rest (``--rest`` / ``TAKEN_REST=1``): the escape hatch, and
+       it beats ``--graphql`` so there is always a way to force REST
+    3. explicit graphql (``--graphql`` / ``TAKEN_GRAPHQL=1``)
+    4. authenticated invoker -> ``"graphql"`` (the default for logged-in users)
+    5. otherwise ``"rest"`` (the anonymous / console tier stays on REST)
+
+    This is the single place that maps "what the caller asked for" to a
+    transport, so a future budget tier can pick the pipe here.
     """
     flag_graphql = bool(args and getattr(args, "graphql", False))
     flag_persistent = bool(args and getattr(args, "persistent_session", False))
+    flag_rest = bool(args and getattr(args, "rest", False))
     if flag_persistent or os.environ.get("TAKEN_PERSISTENT_SESSION") == "1":
         return "persistent"
+    if flag_rest or os.environ.get("TAKEN_REST") == "1":
+        return "rest"
     if flag_graphql or os.environ.get("TAKEN_GRAPHQL") == "1":
+        return "graphql"
+    if _is_authenticated():
         return "graphql"
     return "rest"
 
@@ -635,10 +664,9 @@ def run_checks_graphql(owner, repo, number, me=None, mode="graphql", session=Non
     merged_page = merged.get("pageInfo") or {}
     cutoff = datetime.now(timezone.utc) - timedelta(days=checks.HEALTH_WINDOW_DAYS)
     pages = 1
-    merge_pages = budget.effective_cap(_MAX_MERGE_PAGES, "gql_merge_pages")
     while (
         merged_page.get("hasNextPage")
-        and pages < merge_pages
+        and pages < budget.effective_cap(_MAX_MERGE_PAGES, "gql_merge_pages")
         and _oldest_merged_at(merged) >= cutoff
     ):
         variables = {**variables, "prsAfter": merged_page.get("endCursor")}
@@ -668,7 +696,40 @@ def run_checks_graphql(owner, repo, number, me=None, mode="graphql", session=Non
             "comments": comments_truncated,
             "labels": labels_truncated,
         },
+        # The GraphQL path always runs every stage (no cheapest-first early
+        # stop), so the honest value is the empty list.
+        "stages_skipped": [],
     }
+
+
+def run_checks_with_fallback(owner, repo, number, me=None, mode="graphql", session=None):
+    """Run the check suite, falling back from GraphQL to REST on failure.
+
+    GraphQL is the default transport for authenticated invokers, but it
+    must never fail louder than REST can recover: any transport-level
+    failure (auth, rate limit, schema error, timeout) retries the check
+    over REST for that issue. The fallback is recorded in the findings so
+    it is never silent, and a fallback verdict carries no more confidence
+    than the REST evidence behind it.
+
+    ``NotFoundError`` is not a transport failure (the issue is absent on
+    both paths) and is re-raised without a fallback attempt.
+    """
+    if mode not in ("graphql", "persistent"):
+        findings = checks.run_checks(owner, repo, number, me=me)
+        findings["transport"] = "rest"
+        return findings
+    try:
+        findings = run_checks_graphql(owner, repo, number, me=me, mode=mode, session=session)
+    except checks.NotFoundError:
+        raise
+    except checks.TakenError as exc:
+        findings = checks.run_checks(owner, repo, number, me=me)
+        findings["transport"] = "rest"
+        findings["transport_fallback"] = f"{mode} transport failed ({exc}); fell back to REST"
+        return findings
+    findings["transport"] = mode
+    return findings
 
 
 def _oldest_merged_at(merged):

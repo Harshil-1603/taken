@@ -34,7 +34,12 @@ def issue_payload(number, kind="go", labels=()):
 def make_fake(states, labels_map=None):
     def fake(endpoint, params=None):
         if endpoint == "repos/octo/repo/issues":
-            return [issue_payload(n) for n in sorted(states)]
+            # The real issues endpoint returns the same full issue objects
+            # as the per-issue GET, so the listing mirrors it exactly.
+            return [
+                issue_payload(n, states.get(n, "go"), (labels_map or {}).get(n, ()))
+                for n in sorted(states)
+            ]
         if "/issues/" in endpoint:
             number = int(endpoint.split("/issues/")[1].split("/")[0])
             if endpoint.endswith("/comments"):
@@ -336,7 +341,7 @@ def test_check_issue_uses_graphql_when_authenticated(monkeypatch):
     seen = {}
     monkeypatch.setattr(checks, "_github_identity", lambda: "someone")
 
-    def fake(owner, repo, number, me=None, mode="rest", session=None):
+    def fake(owner, repo, number, me=None, mode="rest", session=None, payload=None):
         seen["mode"] = mode
         return {"transport": mode}
 
@@ -351,7 +356,7 @@ def test_check_issue_uses_graphql_when_authenticated(monkeypatch):
 def test_check_issue_stays_rest_when_anonymous(monkeypatch):
     seen = {}
 
-    def fake(owner, repo, number, me=None, mode="rest", session=None):
+    def fake(owner, repo, number, me=None, mode="rest", session=None, payload=None):
         seen["mode"] = mode
         return {"transport": mode}
 
@@ -366,7 +371,7 @@ def test_check_issue_explicit_flags_still_win(monkeypatch):
     seen = {}
     monkeypatch.setattr(checks, "_github_identity", lambda: "someone")
 
-    def fake(owner, repo, number, me=None, mode="rest", session=None):
+    def fake(owner, repo, number, me=None, mode="rest", session=None, payload=None):
         seen["mode"] = mode
         return {"transport": mode}
 
@@ -397,7 +402,7 @@ def test_scan_repo_resolves_mode_automatically(monkeypatch, faked):
     seen = []
     monkeypatch.setattr(checks, "_github_identity", lambda: "someone")
 
-    def fake(owner, repo, number, me=None, mode="rest", session=None):
+    def fake(owner, repo, number, me=None, mode="rest", session=None, payload=None):
         seen.append(mode)
         return {"transport": mode}
 

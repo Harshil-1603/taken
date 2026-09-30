@@ -405,13 +405,20 @@ def run_discover(args):
     return 0
 
 
-def check_one(owner, repo, number, me, mode="rest"):
+def check_one(owner, repo, number, me, mode="rest", payload=None):
     """Run the full check on one issue. Returns (target, verdict, reasons, findings).
 
     GraphQL-family modes fall back to REST per issue when the GraphQL
     transport fails; the fallback is recorded in the findings.
+
+    `payload` is an optional pre-fetched issue item (e.g. from
+    list_open_issues): on the REST path it skips the per-issue refetch
+    (issue #211). The GraphQL path issues one combined query per issue
+    and cannot reuse a REST item, so the payload is ignored there.
     """
-    findings = graphql.run_checks_with_fallback(owner, repo, number, me=me, mode=mode)
+    findings = graphql.run_checks_with_fallback(
+        owner, repo, number, me=me, mode=mode, payload=payload
+    )
     verdict, reasons = decide(findings)
     return f"{owner}/{repo}#{number}", verdict, reasons, findings
 
@@ -489,7 +496,7 @@ def run_batch(targets, args):
     failed = False
     scanned_repo = False
     mode = graphql.fetch_mode(args)
-    jobs = []  # (error label, owner, repo, number) in input order
+    jobs = []  # (error label, owner, repo, number, payload) in input order
     for text in targets:
         parsed = parse_target(text)
         if not parsed:
@@ -507,21 +514,22 @@ def run_batch(targets, args):
                 continue
             if not issues:
                 print(f"note: {text}: no open issues found", file=sys.stderr)
-            for issue_owner, issue_repo, number in issues:
-                jobs.append(
-                    (f"{issue_owner}/{issue_repo}#{number}", issue_owner, issue_repo, number)
-                )
+            for item in issues:
+                number = item["number"]
+                # The listing already fetched this issue: pass it as
+                # payload so check_issue() skips the redundant GET.
+                jobs.append((f"{owner}/{repo}#{number}", owner, repo, number, item))
         else:
             _, owner, repo, number = parsed
-            jobs.append((text, owner, repo, number))
+            jobs.append((text, owner, repo, number, None))
     if jobs:
         workers = budget.current().batch_workers
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
             futures = [
-                pool.submit(check_one, owner, repo, number, args.me, mode)
-                for _, owner, repo, number in jobs
+                pool.submit(check_one, owner, repo, number, args.me, mode, payload)
+                for _, owner, repo, number, payload in jobs
             ]
-            for (label, _, _, _), future in zip(jobs, futures, strict=True):
+            for (label, _, _, _, _), future in zip(jobs, futures, strict=True):
                 try:
                     results.append(future.result())
                 except checks.TakenError as exc:

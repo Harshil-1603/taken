@@ -26,6 +26,19 @@ HEALTH_WINDOW_DAYS = 30
 CONTRIBUTORS_WINDOW_DAYS = 90
 CACHE_TTL_SECONDS = 3600
 
+# Endpoints become positional arguments to the `gh api` subprocess, so keep
+# them to a safe alphabet: no leading dash (which `gh` would parse as a
+# flag), no whitespace or control characters. Every endpoint the codebase
+# builds (repos/..., search/..., graphql, contents/...) fits this shape.
+_ENDPOINT_SAFE_RE = re.compile(r"[A-Za-z0-9_./][A-Za-z0-9_./-]*")
+
+
+def _require_safe_endpoint(endpoint):
+    """Reject an endpoint string that could not be a plain API path."""
+    if not isinstance(endpoint, str) or not _ENDPOINT_SAFE_RE.fullmatch(endpoint):
+        raise TakenError(f"refusing to call unsafe API endpoint: {endpoint!r}")
+
+
 # Timeline and comment scans page through the API instead of trusting the
 # first 100 results: on a busy issue a linked PR or a claimant comment can
 # hide on a later page, which would silently flip a verdict to GO.
@@ -761,6 +774,7 @@ def _gh_api_run(cmd, endpoint, paced):
 
 def gh_api(endpoint, params=None):
     """GET a GitHub API endpoint via `gh api` and return parsed JSON."""
+    _require_safe_endpoint(endpoint)
     key = _cache_key(endpoint, params)
     if _CACHE_ENABLED:
         cache_start = time.perf_counter()
@@ -1021,7 +1035,14 @@ def check_ai_policy(owner, repo):
 
 
 def list_open_issues(owner, repo, limit=20, label=None):
-    """List open issues (not PRs) for a repo, most recently updated first."""
+    """List open issues (not PRs) for a repo, most recently updated first.
+
+    Returns the raw issue items (dicts), so callers can pass them as
+    `payload=` into run_checks() and skip the per-issue refetch of data
+    the listing already returned (issue #211). Items lacking any field
+    check_issue() needs are still safe to pass: the payload is rejected
+    and the plain GET runs instead.
+    """
     endpoint = f"repos/{owner}/{repo}/issues"
     params = {"state": "open", "per_page": "100", "sort": "updated", "direction": "desc"}
     if label:
@@ -1036,7 +1057,7 @@ def list_open_issues(owner, repo, limit=20, label=None):
         for item in items:
             if "pull_request" in item:
                 continue
-            found.append((owner, repo, item["number"]))
+            found.append(item)
             if len(found) >= limit:
                 break
         if len(items) < 100:

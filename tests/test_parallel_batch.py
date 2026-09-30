@@ -66,7 +66,7 @@ def test_batch_checks_run_concurrently(monkeypatch, capsys):
     _mute_transport(monkeypatch)
     barrier = threading.Barrier(2, timeout=15)
 
-    def fake_check_one(owner, repo, number, me, mode="rest"):
+    def fake_check_one(owner, repo, number, me, mode="rest", payload=None):
         barrier.wait()  # raises BrokenBarrierError if never overlapped
         return (f"{owner}/{repo}#{number}", "GO", ["reason"], {})
 
@@ -81,7 +81,7 @@ def test_batch_output_order_preserved(monkeypatch, capsys):
     budget.activate(identity="someone")
     _mute_transport(monkeypatch)
 
-    def fake_check_one(owner, repo, number, me, mode="rest"):
+    def fake_check_one(owner, repo, number, me, mode="rest", payload=None):
         if number == 1:
             time.sleep(2)
         return (f"{owner}/{repo}#{number}", "GO", ["reason"], {})
@@ -96,7 +96,7 @@ def test_batch_output_order_preserved(monkeypatch, capsys):
 def test_batch_verdict_parity_sequential_vs_parallel(monkeypatch, capsys):
     """Same targets, same output, whether 1 worker or 8 (plus a parse error)."""
 
-    def fake_check_one(owner, repo, number, me, mode="rest"):
+    def fake_check_one(owner, repo, number, me, mode="rest", payload=None):
         verdict = "TAKEN" if number == 1 else "GO"
         return (f"o/r#{number}", verdict, [f"reason {number}"], {})
 
@@ -131,7 +131,9 @@ def test_batch_uses_tier_worker_count(monkeypatch):
 
     monkeypatch.setattr(concurrent.futures, "ThreadPoolExecutor", spy)
     monkeypatch.setattr(
-        cli, "check_one", lambda o, r, n, me, mode="rest": (f"{o}/{r}#{n}", "GO", [], {})
+        cli,
+        "check_one",
+        lambda o, r, n, me, mode="rest", payload=None: (f"{o}/{r}#{n}", "GO", [], {}),
     )
     _mute_transport(monkeypatch)
 
@@ -149,10 +151,10 @@ def test_batch_repo_scan_checks_issues_concurrently(monkeypatch, capsys):
     """A bare owner/repo target fans its listed issues out to the pool."""
     budget.activate(identity="someone")
     _mute_transport(monkeypatch)
-    monkeypatch.setattr(checks, "list_open_issues", lambda *a, **k: [("o", "r", 1), ("o", "r", 2)])
+    monkeypatch.setattr(checks, "list_open_issues", lambda *a, **k: [{"number": 1}, {"number": 2}])
     barrier = threading.Barrier(2, timeout=15)
 
-    def fake_check_one(owner, repo, number, me, mode="rest"):
+    def fake_check_one(owner, repo, number, me, mode="rest", payload=None):
         barrier.wait()
         return (f"{owner}/{repo}#{number}", "GO", ["reason"], {})
 
@@ -167,7 +169,7 @@ def test_batch_check_error_does_not_stop_others(monkeypatch, capsys):
     budget.activate(identity="someone")
     _mute_transport(monkeypatch)
 
-    def fake_check_one(owner, repo, number, me, mode="rest"):
+    def fake_check_one(owner, repo, number, me, mode="rest", payload=None):
         if number == 1:
             raise checks.TakenError("simulated failure")
         return (f"{owner}/{repo}#{number}", "GO", ["reason"], {})
@@ -195,11 +197,11 @@ def _payload(number, verdict="GO"):
 
 def test_scan_repo_checks_run_concurrently(monkeypatch):
     budget.activate(identity="someone")
-    monkeypatch.setattr(checks, "list_open_issues", lambda *a, **k: [("o", "r", 1), ("o", "r", 2)])
+    monkeypatch.setattr(checks, "list_open_issues", lambda *a, **k: [{"number": 1}, {"number": 2}])
     monkeypatch.setattr(graphql, "fetch_mode", lambda *a, **k: "rest")
     barrier = threading.Barrier(2, timeout=15)
 
-    def fake_check_one(owner, repo, number, me=None, mode=None):
+    def fake_check_one(owner, repo, number, me=None, mode=None, payload=None):
         barrier.wait()
         return _payload(number)
 
@@ -212,10 +214,10 @@ def test_scan_repo_checks_run_concurrently(monkeypatch):
 def test_scan_repo_result_order_matches_sequential(monkeypatch):
     """Same-verdict results keep input order even when checks finish late."""
     budget.activate(identity="someone")
-    monkeypatch.setattr(checks, "list_open_issues", lambda *a, **k: [("o", "r", 1), ("o", "r", 2)])
+    monkeypatch.setattr(checks, "list_open_issues", lambda *a, **k: [{"number": 1}, {"number": 2}])
     monkeypatch.setattr(graphql, "fetch_mode", lambda *a, **k: "rest")
 
-    def fake_check_one(owner, repo, number, me=None, mode=None):
+    def fake_check_one(owner, repo, number, me=None, mode=None, payload=None):
         if number == 1:
             time.sleep(2)
         return _payload(number)
@@ -228,10 +230,10 @@ def test_scan_repo_result_order_matches_sequential(monkeypatch):
 
 def test_scan_repo_error_entry_keeps_its_place(monkeypatch):
     budget.activate(identity="someone")
-    monkeypatch.setattr(checks, "list_open_issues", lambda *a, **k: [("o", "r", 1), ("o", "r", 2)])
+    monkeypatch.setattr(checks, "list_open_issues", lambda *a, **k: [{"number": 1}, {"number": 2}])
     monkeypatch.setattr(graphql, "fetch_mode", lambda *a, **k: "rest")
 
-    def fake_check_one(owner, repo, number, me=None, mode=None):
+    def fake_check_one(owner, repo, number, me=None, mode=None, payload=None):
         if number == 1:
             raise checks.TakenError("simulated failure")
         return _payload(number)

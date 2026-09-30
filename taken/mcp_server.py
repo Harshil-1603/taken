@@ -31,7 +31,7 @@ from taken import __version__, budget, checks, discover, graphql
 from taken.verdict import decide
 
 
-def _check_one(owner, repo, number, me=None, mode=None):
+def _check_one(owner, repo, number, me=None, mode=None, payload=None):
     """Run the full check suite on one issue; return the tool payload.
 
     ``mode`` selects the fetch path ("rest", "graphql", "persistent");
@@ -40,10 +40,15 @@ def _check_one(owner, repo, number, me=None, mode=None):
     exactly like the CLI. GraphQL-family modes fall back to REST when
     the GraphQL transport fails; the fallback is recorded in the
     findings.
+
+    `payload` is an optional pre-fetched issue item: on the REST path it
+    skips the per-issue refetch (issue #211).
     """
     if mode is None:
         mode = graphql.fetch_mode()
-    findings = graphql.run_checks_with_fallback(owner, repo, number, me=me, mode=mode)
+    findings = graphql.run_checks_with_fallback(
+        owner, repo, number, me=me, mode=mode, payload=payload
+    )
     verdict, reasons = decide(findings)
     return {
         "target": f"{owner}/{repo}#{number}",
@@ -154,16 +159,17 @@ def scan_repo(
     results = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
         futures = [
-            pool.submit(_check_one, issue_owner, issue_repo, number, me=me, mode=mode)
-            for issue_owner, issue_repo, number in issues
+            pool.submit(_check_one, owner, repo, item["number"], me=me, mode=mode, payload=item)
+            for item in issues
         ]
-        for (issue_owner, issue_repo, number), future in zip(issues, futures, strict=True):
+        for item, future in zip(issues, futures, strict=True):
+            number = item["number"]
             try:
+                # The listing already fetched this issue: pass it as payload
+                # so the per-issue refetch is skipped (issue #211).
                 payload = future.result()
             except checks.TakenError as exc:
-                results.append(
-                    {"target": f"{issue_owner}/{issue_repo}#{number}", "error": str(exc)}
-                )
+                results.append({"target": f"{owner}/{repo}#{number}", "error": str(exc)})
                 continue
             findings = payload["findings"]
             results.append(

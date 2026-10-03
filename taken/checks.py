@@ -1504,11 +1504,27 @@ def _repo_push_info(owner, repo, window_days=HEALTH_WINDOW_DAYS):
     return pushed_at, pushed_recently
 
 
+def _page_stale(prs, cutoff):
+    """True when a full page's oldest `updated_at` falls below the cutoff.
+
+    Pages arrive `sort=updated desc`, so the oldest entry is last. A
+    missing or malformed `updated_at` fails closed (False) so paging
+    continues exactly as before.
+    """
+    oldest_updated = _parse_ts(prs[-1].get("updated_at"))
+    return oldest_updated is not None and oldest_updated < cutoff
+
+
 def _repo_recent_merges(owner, repo, cutoff, pulls_pages):
     """Count PRs merged since `cutoff`.
 
     Pages stay sequential with the early break on a short page, so the
     parallel health check issues exactly the calls the sequential one did.
+    A second early break fires when a full page's oldest `updated_at`
+    falls below the cutoff: pages are `sort=updated desc`, and every
+    merged PR satisfies `updated_at >= merged_at`, so no later page can
+    hold an in-window merge and the call is provably redundant
+    (issue #218).
     """
     recent_merges = 0
     for page in range(1, pulls_pages + 1):
@@ -1536,6 +1552,8 @@ def _repo_recent_merges(owner, repo, cutoff, pulls_pages):
             if merged_dt >= cutoff:
                 recent_merges += 1
         if len(prs) < 50:
+            break
+        if _page_stale(prs, cutoff):
             break
     return recent_merges
 
